@@ -57,6 +57,22 @@ export function activate(context: vscode.ExtensionContext) {
   statusBarManager.setConnected(); // Start enabled
   context.subscriptions.push(statusBarManager);
 
+  // Initialize status bar with configured model
+  const config = vscode.workspace.getConfiguration("sidekick");
+  const inlineModel = config.get<string>("inlineModel") ?? "haiku";
+  statusBarManager.setModel(inlineModel);
+
+  // Update status bar when model configuration changes
+  context.subscriptions.push(
+    vscode.workspace.onDidChangeConfiguration((e) => {
+      if (e.affectsConfiguration("sidekick.inlineModel")) {
+        const config = vscode.workspace.getConfiguration("sidekick");
+        const model = config.get<string>("inlineModel") ?? "haiku";
+        statusBarManager?.setModel(model);
+      }
+    })
+  );
+
   // Initialize auth service
   authService = new AuthService(context);
   context.subscriptions.push(authService);
