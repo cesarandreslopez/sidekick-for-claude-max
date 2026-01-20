@@ -31,25 +31,13 @@ If applicable, add screenshots to help explain your problem.
 - **OS**: [e.g., macOS 14.0, Ubuntu 22.04, Windows 11]
 - **VS Code Version**: [e.g., 1.85.0]
 - **Extension Version**: [e.g., 0.2.0]
-- **Python Version**: [e.g., 3.11.0]
 - **Node Version**: [e.g., 20.0.0]
 
 ## Component
 
-- [ ] VS Code Extension
-- [ ] Server
-- [ ] Both
+VS Code Extension
 
 ## Logs
-
-<details>
-<summary>Server logs</summary>
-
-```
-Paste server logs here (check logs/ directory)
-```
-
-</details>
 
 <details>
 <summary>VS Code Output</summary>

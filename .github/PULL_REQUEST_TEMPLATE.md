@@ -16,9 +16,7 @@ Fixes #(issue number)
 ## Component
 
 - [ ] VS Code Extension (`sidekick-vscode/`)
-- [ ] Server (`sidekick-server/`)
-- [ ] Both
-- [ ] Other (scripts, docs, etc.)
+- [ ] Other (docs, CI, etc.)
 
 ## Checklist
 
