@@ -5,7 +5,7 @@ VS Code extension that provides AI-powered inline code completions and transform
 ## Prerequisites
 
 - **VS Code** v1.85.0 or higher
-- **Sidekick Server** running (see [README-SERVER.md](README-SERVER.md))
+- **Claude Code CLI** installed and authenticated (`npm install -g @anthropic-ai/claude-code && claude auth`)
 
 ## Installation
 
@@ -87,7 +87,6 @@ Open VS Code Settings (`Ctrl+,` / `Cmd+,`) and search for "Sidekick".
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `sidekick.serverUrl` | `http://localhost:3456` | URL of the Sidekick server |
 | `sidekick.enabled` | `true` | Enable/disable inline completions |
 | `sidekick.debounceMs` | `300` | Delay before requesting completion (ms) |
 | `sidekick.inlineContextLines` | `30` | Lines of context before/after cursor for inline |
@@ -100,7 +99,6 @@ Open VS Code Settings (`Ctrl+,` / `Cmd+,`) and search for "Sidekick".
 
 ```json
 {
-  "sidekick.serverUrl": "http://localhost:3456",
   "sidekick.enabled": true,
   "sidekick.debounceMs": 300,
   "sidekick.inlineContextLines": 30,
@@ -133,30 +131,30 @@ Open VS Code Settings (`Ctrl+,` / `Cmd+,`) and search for "Sidekick".
 ## How It Works
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                    VS Code Editor                       │
-├─────────────────────────────────────────────────────────┤
-│  User types code                                        │
-│       │                                                 │
-│       ▼                                                 │
-│  SidekickInlineCompletionProvider                       │
-│       │                                                 │
-│       ├──► Debounce (300ms default)                    │
-│       │                                                 │
-│       ├──► Extract context (prefix + suffix)           │
-│       │                                                 │
-│       ▼                                                 │
-│  POST /inline ───────────────────────► Server           │
-│                                                         │
-│  Display ghost text ◄─────────────────── Response       │
-│       │                                                 │
-│       ▼                                                 │
-│  User accepts (Tab) or dismisses (Esc)                 │
-└─────────────────────────────────────────────────────────┘
++---------------------------------------------------------+
+|                    VS Code Editor                       |
++---------------------------------------------------------+
+|  User types code                                        |
+|       |                                                 |
+|       v                                                 |
+|  SidekickInlineCompletionProvider                       |
+|       |                                                 |
+|       +---> Debounce (300ms default)                    |
+|       |                                                 |
+|       +---> Extract context (prefix + suffix)           |
+|       |                                                 |
+|       v                                                 |
+|  Anthropic SDK call ------------------> Claude API      |
+|                                                         |
+|  Display ghost text <------------------ Response        |
+|       |                                                 |
+|       v                                                 |
+|  User accepts (Tab) or dismisses (Esc)                  |
++---------------------------------------------------------+
 ```
 
 1. **Context Capture**: The extension captures code around the cursor (configurable lines before/after)
-2. **Debouncing**: Requests are debounced to avoid overwhelming the server during rapid typing
+2. **Debouncing**: Requests are debounced to avoid overwhelming the API during rapid typing
 3. **Request Cancellation**: Stale requests are automatically cancelled when new keystrokes arrive
 4. **Ghost Text**: Completions appear as ghost text that can be accepted with Tab
 
@@ -164,9 +162,9 @@ Open VS Code Settings (`Ctrl+,` / `Cmd+,`) and search for "Sidekick".
 
 ### No completions appearing
 
-1. **Check the server is running**:
+1. **Check Claude Code CLI is authenticated**:
    ```bash
-   curl http://localhost:3456/health
+   claude auth status
    ```
 
 2. **Verify extension is enabled**:
@@ -184,11 +182,11 @@ Open VS Code Settings (`Ctrl+,` / `Cmd+,`) and search for "Sidekick".
 - Use `haiku` model instead of `sonnet`
 - Increase `debounceMs` to reduce request frequency
 
-### Server connection errors
+### Authentication errors
 
-- Verify `serverUrl` matches where your server is running
-- Check for firewall or proxy issues
-- Ensure server has CORS headers (built-in by default)
+- Re-authenticate: `claude auth`
+- Check Claude Max subscription is active
+- Ensure Claude Code CLI is installed globally
 
 ## Development
 

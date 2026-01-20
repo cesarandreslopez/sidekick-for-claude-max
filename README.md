@@ -8,7 +8,6 @@
   <a href="https://marketplace.visualstudio.com/items?itemName=CesarAndresLopez.sidekick-for-max"><img src="https://img.shields.io/visual-studio-marketplace/v/CesarAndresLopez.sidekick-for-max?label=VS%20Code%20Marketplace" alt="VS Code Marketplace"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT"></a>
   <a href="https://github.com/cesarandreslopez/sidekick-for-claude-max/actions/workflows/ci.yml"><img src="https://github.com/cesarandreslopez/sidekick-for-claude-max/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-  <img src="https://img.shields.io/badge/python-3.10+-blue.svg" alt="Python 3.10+">
 </p>
 
 <p align="center">
@@ -32,21 +31,10 @@ If you're already paying for Claude Max, Sidekick lets you use those tokens for 
 
 ## How It Works
 
-The extension sends your code context to a local server, which calls Claude Code CLI to generate completions. Your subscription handles the billing - no API keys or separate accounts needed.
+The extension uses the Anthropic SDK directly to call Claude. If you have a Claude Max subscription, it leverages the Claude Code CLI authentication - no API keys needed.
 
-```
-VS Code Extension                    Local Server (port 3456)
-     │                                      │
-     │  Code context (prefix/suffix)  ────► │
-     │                                      │  Claude Code CLI
-     │  Completion suggestion         ◄──── │  (uses your Max subscription)
-     │                                      │
-```
-
-## Components
-
-- **[sidekick-server](./sidekick-server/)** - FastAPI server that calls Claude Code CLI
-- **[sidekick-vscode](./sidekick-vscode/)** - VS Code extension for inline completions and transforms
+- **Max subscription**: Uses `@anthropic-ai/claude-agent-sdk` via Claude Code CLI auth
+- **API key**: Uses `@anthropic-ai/sdk` with your Anthropic API key
 
 ## Quick Start
 
@@ -63,14 +51,9 @@ VS Code Extension                    Local Server (port 3456)
    claude auth
    ```
 
-2. Start the server:
-   ```bash
-   ./start-server.sh
-   ```
+2. Install the [VS Code extension from the Marketplace](https://marketplace.visualstudio.com/items?itemName=CesarAndresLopez.sidekick-for-max)
 
-3. Install the [VS Code extension from the Marketplace](https://marketplace.visualstudio.com/items?itemName=CesarAndresLopez.sidekick-for-max)
-
-4. Start coding - completions appear automatically as you type
+3. Start coding - completions appear automatically as you type
 
 ## Features
 
