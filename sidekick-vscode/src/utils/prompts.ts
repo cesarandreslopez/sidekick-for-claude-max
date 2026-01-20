@@ -145,3 +145,139 @@ export function cleanCompletion(
 
   return cleaned || undefined;
 }
+
+/**
+ * Patterns indicating a conversational transform response rather than code.
+ */
+const TRANSFORM_CONVERSATIONAL_PATTERNS = [
+  /^Here/i,
+  /^The transformed/i,
+  /^I've/i,
+  /^I have/i,
+];
+
+/**
+ * Generates the system prompt for code transformation requests.
+ *
+ * Instructs Claude to act as a code transformation assistant,
+ * outputting only the transformed code without explanations.
+ *
+ * @returns System prompt string for transforms
+ *
+ * @example
+ * ```typescript
+ * const systemPrompt = getTransformSystemPrompt();
+ * // "You are a code transformation assistant..."
+ * ```
+ */
+export function getTransformSystemPrompt(): string {
+  return `You are a code transformation assistant. Transform the provided code according to the user's instruction.
+
+RULES:
+- Output ONLY the transformed code
+- Preserve the code's functionality unless the instruction changes it
+- Maintain the same programming language
+- Keep the same indentation style
+- NO explanations before or after the code
+- NO markdown code blocks
+- If the instruction is unclear, make a reasonable interpretation`;
+}
+
+/**
+ * Generates the user prompt for a code transformation request.
+ *
+ * Includes the language, code to transform, optional context before/after,
+ * and the transformation instruction.
+ *
+ * @param code - The code to transform
+ * @param instruction - What transformation to apply
+ * @param language - Programming language identifier
+ * @param prefix - Optional code context before the selection
+ * @param suffix - Optional code context after the selection
+ * @returns User prompt string for transforms
+ *
+ * @example
+ * ```typescript
+ * const prompt = getTransformUserPrompt(
+ *   'function add(a, b) { return a + b; }',
+ *   'Add TypeScript types',
+ *   'typescript'
+ * );
+ * ```
+ */
+export function getTransformUserPrompt(
+  code: string,
+  instruction: string,
+  language: string,
+  prefix?: string,
+  suffix?: string
+): string {
+  let prompt = `Language: ${language}\n\n`;
+
+  if (prefix) {
+    prompt += `Context before:\n${prefix}\n\n`;
+  }
+
+  prompt += `Code to transform:\n${code}\n\n`;
+
+  if (suffix) {
+    prompt += `Context after:\n${suffix}\n\n`;
+  }
+
+  prompt += `Instruction: ${instruction}\n\nTransformed code:`;
+
+  return prompt;
+}
+
+/**
+ * Cleans and validates a transform response from Claude.
+ *
+ * Removes markdown code block markers and filters out conversational
+ * responses that don't contain just code.
+ *
+ * @param text - Raw transform response text from Claude
+ * @returns Cleaned code string, or undefined if invalid/filtered
+ *
+ * @example
+ * ```typescript
+ * // Valid transform
+ * cleanTransformResponse('function add(a: number, b: number): number { return a + b; }');
+ * // Returns the code
+ *
+ * // Markdown removal
+ * cleanTransformResponse('```typescript\nconst x = 1;\n```');
+ * // Returns 'const x = 1;'
+ *
+ * // Conversational filtering
+ * cleanTransformResponse("Here's the transformed code:\nconst x = 1;");
+ * // Returns 'const x = 1;' (extracts code after newline)
+ * ```
+ */
+export function cleanTransformResponse(text: string): string | undefined {
+  // Remove markdown code blocks (```language ... ```)
+  let cleaned = text
+    .replace(/^```[\w]*\n?/, '')
+    .replace(/\n?```$/, '')
+    .trim();
+
+  // Check for conversational prefixes
+  for (const pattern of TRANSFORM_CONVERSATIONAL_PATTERNS) {
+    if (pattern.test(cleaned)) {
+      // Try to extract code after first newline
+      const newlineIndex = cleaned.indexOf('\n');
+      if (newlineIndex !== -1) {
+        cleaned = cleaned.slice(newlineIndex + 1).trim();
+        // Remove any remaining markdown blocks after extraction
+        cleaned = cleaned
+          .replace(/^```[\w]*\n?/, '')
+          .replace(/\n?```$/, '')
+          .trim();
+      } else {
+        // No newline found, can't extract code
+        return undefined;
+      }
+    }
+  }
+
+  return cleaned || undefined;
+}
