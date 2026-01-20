@@ -74,6 +74,16 @@ Select code, press `Ctrl+Shift+M`, and describe how to transform it. Uses Opus b
 
 This design lets you use inline completions freely throughout the day while preserving quota for heavier CLI workflows and transforms.
 
+## Multiple Windows
+
+Each VS Code window runs its own extension instance with independent caches. This means:
+
+- **No shared cache** - Completions cached in one window aren't available in another
+- **Independent requests** - Opening the same file in two windows may trigger duplicate API calls
+- **Shared authentication** - All windows use the same Claude Code CLI auth or API key
+
+This is standard VS Code extension behavior. For most workflows it's transparent, but be aware that many simultaneous windows could increase token usage.
+
 ## Installing in VS Code Forks
 
 The extension works in Cursor, VSCodium, and other VS Code forks. Since these editors can't install directly from the VS Code Marketplace, you'll need to install via VSIX:
