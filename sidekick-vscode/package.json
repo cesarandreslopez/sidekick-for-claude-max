@@ -30,8 +30,13 @@
   "engines": {
     "vscode": "^1.85.0"
   },
-  "categories": ["Machine Learning", "Programming Languages"],
-  "activationEvents": ["onStartupFinished"],
+  "categories": [
+    "Machine Learning",
+    "Programming Languages"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
   "main": "./out/extension.js",
   "contributes": {
     "configuration": {
@@ -69,7 +74,10 @@
         },
         "sidekick.inlineModel": {
           "type": "string",
-          "enum": ["haiku", "sonnet"],
+          "enum": [
+            "haiku",
+            "sonnet"
+          ],
           "default": "haiku",
           "description": "Model for inline completions (haiku=fast, sonnet=quality)",
           "enumDescriptions": [
@@ -79,7 +87,11 @@
         },
         "sidekick.transformModel": {
           "type": "string",
-          "enum": ["haiku", "sonnet", "opus"],
+          "enum": [
+            "haiku",
+            "sonnet",
+            "opus"
+          ],
           "default": "opus",
           "description": "Model for code transformations (opus=highest quality, sonnet=balanced, haiku=fast)",
           "enumDescriptions": [
@@ -120,9 +132,10 @@
     ]
   },
   "scripts": {
-    "vscode:prepublish": "npm run compile",
-    "compile": "tsc -p ./",
-    "watch": "tsc -watch -p ./",
+    "vscode:prepublish": "npm run build",
+    "build": "node esbuild.js --production",
+    "compile": "node esbuild.js",
+    "watch": "node esbuild.js --watch",
     "lint": "eslint src/",
     "lint:fix": "eslint src/ --fix",
     "test": "vitest run",
@@ -131,9 +144,14 @@
   "devDependencies": {
     "@types/node": "^20.0.0",
     "@types/vscode": "^1.85.0",
+    "esbuild": "^0.27.2",
     "eslint": "^9.0.0",
-    "typescript-eslint": "^8.0.0",
     "typescript": "^5.0.0",
+    "typescript-eslint": "^8.0.0",
     "vitest": "^2.0.0"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.2.12",
+    "@anthropic-ai/sdk": "^0.71.2"
   }
 }
