@@ -86,13 +86,15 @@
           "type": "string",
           "enum": [
             "haiku",
-            "sonnet"
+            "sonnet",
+            "opus"
           ],
           "default": "haiku",
-          "description": "Model for inline completions (haiku=fast, sonnet=quality)",
+          "description": "Model for inline completions (haiku=fast, sonnet=balanced, opus=quality)",
           "enumDescriptions": [
-            "Claude Haiku - Faster completions (recommended for inline)",
-            "Claude Sonnet - Higher quality, slower"
+            "Claude Haiku - Fastest completions (recommended for inline)",
+            "Claude Sonnet - Balanced speed and quality",
+            "Claude Opus - Highest quality, slower"
           ]
         },
         "sidekick.transformModel": {
