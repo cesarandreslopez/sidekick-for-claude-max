@@ -39,6 +39,24 @@ export interface CompletionOptions {
 }
 
 /**
+ * Context for a completion request (used for caching).
+ */
+export interface CompletionContext {
+  /** Programming language identifier */
+  language: string;
+  /** Model shorthand (haiku, sonnet, opus) */
+  model: string;
+  /** Code before cursor (last ~500 chars used for cache key) */
+  prefix: string;
+  /** Code after cursor (first ~200 chars used for cache key) */
+  suffix: string;
+  /** Whether this is a multi-line completion request */
+  multiline: boolean;
+  /** Filename for context */
+  filename: string;
+}
+
+/**
  * Interface for Claude API clients.
  *
  * Both ApiKeyClient and MaxSubscriptionClient implement this interface,
