@@ -18,6 +18,7 @@
 import * as vscode from "vscode";
 import * as https from "https";
 import * as http from "http";
+import { AuthService } from "./services/AuthService";
 
 /**
  * Response from the completion server.
@@ -59,6 +60,9 @@ let debounceTimer: NodeJS.Timeout | undefined;
 /** Counter for tracking the latest request (used to cancel stale requests) */
 let lastRequestId = 0;
 
+/** Auth service managing Claude API access */
+let authService: AuthService | undefined;
+
 /**
  * Activates the extension.
  *
@@ -81,6 +85,10 @@ export function activate(context: vscode.ExtensionContext) {
   updateStatusBar();
   statusBarItem.show();
   context.subscriptions.push(statusBarItem);
+
+  // Initialize auth service
+  authService = new AuthService(context);
+  context.subscriptions.push(authService);
 
   // Register inline completion provider
   const provider = new SidekickInlineCompletionProvider();
@@ -112,6 +120,48 @@ export function activate(context: vscode.ExtensionContext) {
         }
       }
     )
+  );
+
+  // Register set API key command
+  context.subscriptions.push(
+    vscode.commands.registerCommand("sidekick.setApiKey", async () => {
+      const key = await vscode.window.showInputBox({
+        prompt: "Enter your Anthropic API Key",
+        placeHolder: "sk-ant-...",
+        password: true,
+        ignoreFocusOut: true,
+      });
+
+      if (key) {
+        await authService?.getSecretsManager().setApiKey(key);
+        vscode.window.showInformationMessage("API key saved securely.");
+      }
+    })
+  );
+
+  // Register test connection command
+  context.subscriptions.push(
+    vscode.commands.registerCommand("sidekick.testConnection", async () => {
+      if (!authService) {
+        vscode.window.showErrorMessage("Auth service not initialized");
+        return;
+      }
+
+      const result = await vscode.window.withProgress(
+        {
+          location: vscode.ProgressLocation.Notification,
+          title: "Testing connection...",
+          cancellable: false,
+        },
+        async () => authService!.testConnection()
+      );
+
+      if (result.success) {
+        vscode.window.showInformationMessage(result.message);
+      } else {
+        vscode.window.showErrorMessage(result.message);
+      }
+    })
   );
 
   // Register transform selected code command
@@ -494,9 +544,11 @@ function fetchTransform(
  * Deactivates the extension.
  *
  * Called when the extension is deactivated. Cleans up any pending timers.
+ * AuthService cleanup happens automatically via context.subscriptions.
  */
 export function deactivate(): void {
   if (debounceTimer) {
     clearTimeout(debounceTimer);
   }
+  // AuthService cleanup happens via context.subscriptions
 }
