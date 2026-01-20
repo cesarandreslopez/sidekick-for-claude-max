@@ -51,7 +51,9 @@ The extension uses the Anthropic SDK directly to call Claude. If you have a Clau
    claude auth
    ```
 
-2. Install the [VS Code extension from the Marketplace](https://marketplace.visualstudio.com/items?itemName=CesarAndresLopez.sidekick-for-max)
+2. Install the extension:
+   - **VS Code**: Install from the [Marketplace](https://marketplace.visualstudio.com/items?itemName=CesarAndresLopez.sidekick-for-max)
+   - **Cursor/Other forks**: See [Installing in VS Code Forks](#installing-in-vs-code-forks) below
 
 3. Start coding - completions appear automatically as you type
 
@@ -71,6 +73,34 @@ Select code, press `Ctrl+Shift+M`, and describe how to transform it. Uses Opus b
 | Code transforms | Opus | Higher - worth it for quality |
 
 This design lets you use inline completions freely throughout the day while preserving quota for heavier CLI workflows and transforms.
+
+## Installing in VS Code Forks
+
+The extension works in Cursor, VSCodium, and other VS Code forks. Since these editors can't install directly from the VS Code Marketplace, you'll need to install via VSIX:
+
+### Option 1: Download from GitHub Releases
+
+1. Download the latest `.vsix` file from [Releases](https://github.com/cesarandreslopez/sidekick-for-claude-max/releases)
+2. In your editor: Extensions → `...` menu → "Install from VSIX..."
+3. Select the downloaded file
+
+### Option 2: Build from Source
+
+```bash
+git clone https://github.com/cesarandreslopez/sidekick-for-claude-max.git
+cd sidekick-for-claude-max/sidekick-vscode
+npm install
+npm run package
+```
+
+Then install the generated `.vsix` file as above.
+
+### Cursor-Specific Notes
+
+Cursor has its own AI features that may conflict with Sidekick completions. To use Sidekick in Cursor:
+
+1. Disable Cursor's built-in completions in Cursor Settings if you prefer Sidekick's
+2. Or use both side-by-side (Sidekick uses your Claude Max tokens, Cursor uses its own)
 
 ## Contributing
 
