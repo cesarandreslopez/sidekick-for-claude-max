@@ -126,7 +126,7 @@ export function cleanCompletion(
   const maxLength = multiline ? 1000 : 200;
 
   // Remove markdown code blocks
-  let cleaned = text
+  const cleaned = text
     .replace(/^```[\w]*\n?/, '')
     .replace(/\n?```$/, '')
     .trim();

@@ -21,6 +21,7 @@ import * as http from "http";
 import { AuthService } from "./services/AuthService";
 import { CompletionService } from "./services/CompletionService";
 import { InlineCompletionProvider } from "./providers/InlineCompletionProvider";
+import { StatusBarManager } from "./services/StatusBarManager";
 
 /**
  * Response from the transform endpoint.
@@ -36,11 +37,11 @@ interface TransformResponse {
   statusCode?: number;
 }
 
-/** Status bar item showing extension state */
-let statusBarItem: vscode.StatusBarItem;
-
 /** Whether completions are currently enabled */
 let enabled = true;
+
+/** Status bar manager for multi-state status display */
+let statusBarManager: StatusBarManager | undefined;
 
 /** Auth service managing Claude API access */
 let authService: AuthService | undefined;
@@ -61,15 +62,10 @@ let completionService: CompletionService | undefined;
 export function activate(context: vscode.ExtensionContext) {
   console.log("Sidekick for Max extension activated");
 
-  // Create status bar item
-  statusBarItem = vscode.window.createStatusBarItem(
-    vscode.StatusBarAlignment.Right,
-    100
-  );
-  statusBarItem.command = "sidekick.toggle";
-  updateStatusBar();
-  statusBarItem.show();
-  context.subscriptions.push(statusBarItem);
+  // Create status bar manager
+  statusBarManager = new StatusBarManager();
+  statusBarManager.setConnected(); // Start enabled
+  context.subscriptions.push(statusBarManager);
 
   // Initialize auth service
   authService = new AuthService(context);
@@ -91,7 +87,11 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     vscode.commands.registerCommand("sidekick.toggle", () => {
       enabled = !enabled;
-      updateStatusBar();
+      if (enabled) {
+        statusBarManager?.setConnected();
+      } else {
+        statusBarManager?.setDisconnected();
+      }
       vscode.window.showInformationMessage(
         `Sidekick: ${enabled ? "Enabled" : "Disabled"}`
       );
@@ -136,6 +136,8 @@ export function activate(context: vscode.ExtensionContext) {
         return;
       }
 
+      statusBarManager?.setLoading('Testing connection');
+
       const result = await vscode.window.withProgress(
         {
           location: vscode.ProgressLocation.Notification,
@@ -146,8 +148,10 @@ export function activate(context: vscode.ExtensionContext) {
       );
 
       if (result.success) {
+        statusBarManager?.setConnected();
         vscode.window.showInformationMessage(result.message);
       } else {
+        statusBarManager?.setError(result.message);
         vscode.window.showErrorMessage(result.message);
       }
     })
@@ -249,14 +253,6 @@ export function activate(context: vscode.ExtensionContext) {
       }
     )
   );
-}
-
-/**
- * Updates the status bar item to reflect the current enabled state.
- */
-function updateStatusBar(): void {
-  statusBarItem.text = enabled ? "$(sparkle) Sidekick" : "$(sparkle-off) Sidekick";
-  statusBarItem.tooltip = `Sidekick for Max: ${enabled ? "Enabled" : "Disabled"} (click to toggle)`;
 }
 
 /**
