@@ -1,0 +1,58 @@
+# Changelog
+
+All notable changes to the Sidekick for Max VS Code extension will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [0.3.0] - 2025-01-21
+
+### Added
+- **Status Bar Menu**: Click the status bar to access all extension options
+  - Enable/Disable completions
+  - Configure Extension settings
+  - View Logs
+  - Test Connection
+  - Set API Key
+- **View Logs command**: Debug completion issues with the new output channel
+- **Test Connection command**: Verify API connectivity before troubleshooting
+- **Prose file support**: Markdown, plaintext, HTML, XML, LaTeX files now automatically use multiline mode with higher character limits
+- **Model display**: Status bar now shows the current inline model (e.g., "Sidekick haiku")
+
+### Changed
+- **Debounce default**: Increased from 300ms to 1000ms for less aggressive completions
+- **Improved prompts**: Better prompt engineering to reduce meta-responses and improve completion quality
+- **Character limits**: Prose files allow up to 2000 chars (single-line) / 3000 chars (multiline); code files allow 500/800 chars
+
+### Fixed
+- Reduced "I'll complete this..." and other meta-commentary in completions
+- Better handling of code fence removal in responses
+- Improved truncation logic for long responses (truncates at logical boundaries)
+
+## [0.2.0] - 2025-01-10
+
+### Added
+- **Code Transform feature**: Select code and press `Ctrl+Shift+M` / `Cmd+Shift+M` to transform it
+- Independent model selection for inline completions and transforms
+- Transform uses Opus by default for highest quality
+- Context lines configuration for transforms (`sidekick.transformContextLines`)
+- API key authentication mode as alternative to Max subscription
+
+### Changed
+- Rebranded from "Claude Code Max" to "Sidekick for Max"
+- Inline completions use Haiku by default (fastest)
+- Transforms use Opus by default (highest quality)
+
+## [0.1.0] - 2025-01-09
+
+### Added
+- Initial release
+- Inline code completions with ghost text
+- Accept completions with Tab, dismiss with Escape
+- Manual trigger: `Ctrl+Shift+Space` / `Cmd+Shift+Space`
+- Toggle completions via status bar
+- Support for Haiku, Sonnet, and Opus models
+- Debounced completion requests
+- Request cancellation for stale completions
+- In-memory LRU cache for repeated contexts
+- Claude Max subscription integration via Claude Code CLI

@@ -8,7 +8,6 @@
   <a href="https://marketplace.visualstudio.com/items?itemName=CesarAndresLopez.sidekick-for-max"><img src="https://img.shields.io/visual-studio-marketplace/v/CesarAndresLopez.sidekick-for-max?label=VS%20Code%20Marketplace" alt="VS Code Marketplace"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT"></a>
   <a href="https://github.com/cesarandreslopez/sidekick-for-claude-max/actions/workflows/ci.yml"><img src="https://github.com/cesarandreslopez/sidekick-for-claude-max/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-  <img src="https://img.shields.io/badge/python-3.10+-blue.svg" alt="Python 3.10+">
 </p>
 
 <p align="center">
@@ -21,6 +20,8 @@
 
 If you're already paying for Claude Max, Sidekick lets you use those tokens for fast, Copilot-style completions—no extra cost, no separate account.
 
+Let's consider the following: 
+
 ## Why Sidekick for Max?
 
 **Get more value from your Claude Max subscription.** You're paying $100-200/month for Claude Max, but likely have unused capacity in your 5-hour usage windows. Sidekick puts those tokens to work:
@@ -32,21 +33,10 @@ If you're already paying for Claude Max, Sidekick lets you use those tokens for 
 
 ## How It Works
 
-The extension sends your code context to a local server, which calls Claude Code CLI to generate completions. Your subscription handles the billing - no API keys or separate accounts needed.
+The extension uses the Anthropic SDK directly to call Claude. If you have a Claude Max subscription, it leverages the Claude Code CLI authentication - no API keys needed.
 
-```
-VS Code Extension                    Local Server (port 3456)
-     │                                      │
-     │  Code context (prefix/suffix)  ────► │
-     │                                      │  Claude Code CLI
-     │  Completion suggestion         ◄──── │  (uses your Max subscription)
-     │                                      │
-```
-
-## Components
-
-- **[sidekick-server](./sidekick-server/)** - FastAPI server that calls Claude Code CLI
-- **[sidekick-vscode](./sidekick-vscode/)** - VS Code extension for inline completions and transforms
+- **Max subscription**: Uses `@anthropic-ai/claude-agent-sdk` via Claude Code CLI auth
+- **API key**: Uses `@anthropic-ai/sdk` with your Anthropic API key
 
 ## Quick Start
 
@@ -63,14 +53,11 @@ VS Code Extension                    Local Server (port 3456)
    claude auth
    ```
 
-2. Start the server:
-   ```bash
-   ./start-server.sh
-   ```
+2. Install the extension:
+   - **VS Code**: Install from the [Marketplace](https://marketplace.visualstudio.com/items?itemName=CesarAndresLopez.sidekick-for-max)
+   - **Cursor/Other forks**: See [Installing in VS Code Forks](#installing-in-vs-code-forks) below
 
-3. Install the [VS Code extension from the Marketplace](https://marketplace.visualstudio.com/items?itemName=CesarAndresLopez.sidekick-for-max)
-
-4. Start coding - completions appear automatically as you type
+3. Start coding - completions appear automatically as you type
 
 ## Features
 
@@ -88,6 +75,44 @@ Select code, press `Ctrl+Shift+M`, and describe how to transform it. Uses Opus b
 | Code transforms | Opus | Higher - worth it for quality |
 
 This design lets you use inline completions freely throughout the day while preserving quota for heavier CLI workflows and transforms.
+
+## Multiple Windows
+
+Each VS Code window runs its own extension instance with independent caches. This means:
+
+- **No shared cache** - Completions cached in one window aren't available in another
+- **Independent requests** - Opening the same file in two windows may trigger duplicate API calls
+- **Shared authentication** - All windows use the same Claude Code CLI auth or API key
+
+This is standard VS Code extension behavior. For most workflows it's transparent, but be aware that many simultaneous windows could increase token usage.
+
+## Installing in VS Code Forks
+
+The extension works in Cursor, VSCodium, and other VS Code forks. Since these editors can't install directly from the VS Code Marketplace, you'll need to install via VSIX:
+
+### Option 1: Download from GitHub Releases
+
+1. Download the latest `.vsix` file from [Releases](https://github.com/cesarandreslopez/sidekick-for-claude-max/releases)
+2. In your editor: Extensions → `...` menu → "Install from VSIX..."
+3. Select the downloaded file
+
+### Option 2: Build from Source
+
+```bash
+git clone https://github.com/cesarandreslopez/sidekick-for-claude-max.git
+cd sidekick-for-claude-max/sidekick-vscode
+npm install
+npm run package
+```
+
+Then install the generated `.vsix` file as above.
+
+### Cursor-Specific Notes
+
+Cursor has its own AI features that may conflict with Sidekick completions. To use Sidekick in Cursor:
+
+1. Disable Cursor's built-in completions in Cursor Settings if you prefer Sidekick's
+2. Or use both side-by-side (Sidekick uses your Claude Max tokens, Cursor uses its own)
 
 ## Contributing
 

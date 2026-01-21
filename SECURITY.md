@@ -11,7 +11,6 @@
 
 Sidekick for Max is designed with security in mind:
 
-- **Local-only by default**: The server runs on `localhost` and does not expose endpoints to the network unless explicitly configured
 - **No API keys stored**: Uses Claude Code CLI authentication, which manages credentials securely
 - **No telemetry**: No data is sent to external servers beyond Claude API calls
 - **Code stays local**: Your code context is only sent to Anthropic's API through the authenticated CLI
@@ -36,17 +35,13 @@ If you discover a security vulnerability, please report it responsibly:
 
 ## Security Best Practices for Users
 
-1. **Keep dependencies updated**: Regularly update both Python and npm dependencies
-2. **Don't expose the server**: Keep the server bound to `localhost` unless you understand the implications
-3. **Review logs**: Check `logs/` directory for unusual activity
-4. **Use virtual environments**: Isolate Python dependencies
+1. **Keep dependencies updated**: Regularly update npm dependencies
+2. **Use authenticated CLI**: Always authenticate via `claude auth` before use
 
 ## Scope
 
 This security policy covers:
 - The VS Code extension (`sidekick-vscode/`)
-- The FastAPI server (`sidekick-server/`)
-- The startup scripts
 
 It does not cover:
 - Claude Code CLI (report to Anthropic)
