@@ -6,7 +6,6 @@ Thank you for your interest in contributing! This document provides guidelines a
 
 ### Prerequisites
 
-- Python 3.10+
 - Node.js 18+
 - Claude Max subscription with authenticated CLI (`claude auth`)
 
@@ -18,29 +17,15 @@ Thank you for your interest in contributing! This document provides guidelines a
    cd sidekick-for-claude-max
    ```
 
-2. **Set up the server**
-   ```bash
-   cd sidekick-server
-   python3 -m venv venv
-   source venv/bin/activate
-   pip install -r requirements.txt
-   pip install -e ".[dev]"
-   ```
-
-3. **Set up the VS Code extension**
+2. **Set up the VS Code extension**
    ```bash
    cd sidekick-vscode
    npm install
    npm run compile
    ```
 
-4. **Run tests to verify setup**
+3. **Run tests to verify setup**
    ```bash
-   # Server tests
-   cd sidekick-server && source venv/bin/activate
-   python -m pytest
-
-   # Extension tests
    cd sidekick-vscode
    npm test
    ```
@@ -49,19 +34,9 @@ Thank you for your interest in contributing! This document provides guidelines a
 
 ### Running Locally
 
-1. Start the server:
-   ```bash
-   ./start-server.sh --dev
-   ```
-
-2. In VS Code, open `sidekick-vscode/` and press `F5` to launch the Extension Development Host.
+1. In VS Code, open `sidekick-vscode/` and press `F5` to launch the Extension Development Host.
 
 ### Code Style
-
-**Python (Server)**
-- We use [Ruff](https://github.com/astral-sh/ruff) for linting
-- Run `ruff check .` before committing
-- Run `ruff check . --fix` to auto-fix issues
 
 **TypeScript (Extension)**
 - We use ESLint for linting
@@ -70,16 +45,6 @@ Thank you for your interest in contributing! This document provides guidelines a
 
 ### Running Tests
 
-**Server:**
-```bash
-cd sidekick-server
-source venv/bin/activate
-python -m pytest              # Run all tests
-python -m pytest -v           # Verbose output
-python -m pytest -k "pattern" # Run specific tests
-```
-
-**Extension:**
 ```bash
 cd sidekick-vscode
 npm test                      # Run all tests
@@ -123,20 +88,11 @@ Update README with troubleshooting section
 
 ```
 sidekick-for-claude-max/
-├── sidekick-server/          # FastAPI server
-│   ├── main.py               # Entry point
-│   ├── routers/              # API endpoints
-│   ├── services/             # Business logic
-│   ├── utils/                # Utilities
-│   ├── prompts/              # Prompt templates
-│   └── tests/                # Test suite
-│
 ├── sidekick-vscode/          # VS Code extension
 │   ├── src/
 │   │   └── extension.ts      # Extension entry point
 │   └── package.json          # Extension manifest
 │
-├── start-server.sh           # Server startup script
 └── README.md                 # Main documentation
 ```
 

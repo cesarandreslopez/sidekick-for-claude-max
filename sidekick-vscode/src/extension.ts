@@ -1,63 +1,44 @@
 /**
  * @fileoverview VS Code extension providing Sidekick for Max inline completions.
  *
- * This extension integrates with the Sidekick server to provide
- * intelligent code suggestions as you type. It registers an inline completion
- * provider that sends code context to the server and displays suggestions.
+ * This extension uses Claude via the Agent SDK (Max subscription) or API key
+ * to provide intelligent code suggestions as you type. It registers an inline
+ * completion provider that sends code context to Claude and displays suggestions.
  *
  * Features:
  * - Automatic inline completions as you type
+ * - Code transformation via selection and instruction
  * - Configurable debounce delay
  * - Toggle enable/disable via status bar or command
  * - Manual trigger via keyboard shortcut (Ctrl+Shift+Space)
- * - Model selection (haiku for speed, sonnet for quality)
+ * - Model selection (haiku for speed, sonnet/opus for quality)
  *
  * @module extension
  */
 
 import * as vscode from "vscode";
-import * as https from "https";
-import * as http from "http";
-
-/**
- * Response from the completion server.
- */
-interface CompletionResponse {
-  /** The generated code completion */
-  completion: string;
-  /** Error message if the request failed */
-  error?: string;
-  /** Request ID for tracing (correlates with server logs) */
-  requestId?: string;
-  /** HTTP status code from the response */
-  statusCode?: number;
-}
-
-/**
- * Response from the transform endpoint.
- */
-interface TransformResponse {
-  /** The modified code */
-  modified_code: string;
-  /** Error message if the request failed */
-  error?: string;
-  /** Request ID for tracing */
-  requestId?: string;
-  /** HTTP status code from the response */
-  statusCode?: number;
-}
-
-/** Status bar item showing extension state */
-let statusBarItem: vscode.StatusBarItem;
+import { AuthService } from "./services/AuthService";
+import { CompletionService } from "./services/CompletionService";
+import { InlineCompletionProvider } from "./providers/InlineCompletionProvider";
+import { StatusBarManager } from "./services/StatusBarManager";
+import { initLogger, log, logError, showLog } from "./services/Logger";
+import {
+  getTransformSystemPrompt,
+  getTransformUserPrompt,
+  cleanTransformResponse,
+} from "./utils/prompts";
 
 /** Whether completions are currently enabled */
 let enabled = true;
 
-/** Timer for debouncing completion requests */
-let debounceTimer: NodeJS.Timeout | undefined;
+/** Status bar manager for multi-state status display */
+let statusBarManager: StatusBarManager | undefined;
 
-/** Counter for tracking the latest request (used to cancel stale requests) */
-let lastRequestId = 0;
+/** Auth service managing Claude API access */
+let authService: AuthService | undefined;
+
+/** Completion service managing completion requests */
+let completionService: CompletionService | undefined;
 
 /**
  * Activates the extension.
@@ -70,34 +51,124 @@ let lastRequestId = 0;
  * @param context - The extension context provided by VS Code
  */
 export function activate(context: vscode.ExtensionContext) {
-  console.log("Sidekick for Max extension activated");
+  // Initialize logger first
+  const outputChannel = initLogger();
+  context.subscriptions.push(outputChannel);
+  log("Sidekick for Max extension activated");
 
-  // Create status bar item
-  statusBarItem = vscode.window.createStatusBarItem(
-    vscode.StatusBarAlignment.Right,
-    100
+  // Create status bar manager
+  statusBarManager = new StatusBarManager();
+  statusBarManager.setConnected(); // Start enabled
+  context.subscriptions.push(statusBarManager);
+
+  // Initialize status bar with configured model
+  const config = vscode.workspace.getConfiguration("sidekick");
+  const inlineModel = config.get<string>("inlineModel") ?? "haiku";
+  statusBarManager.setModel(inlineModel);
+
+  // Update status bar when model configuration changes
+  context.subscriptions.push(
+    vscode.workspace.onDidChangeConfiguration((e) => {
+      if (e.affectsConfiguration("sidekick.inlineModel")) {
+        const config = vscode.workspace.getConfiguration("sidekick");
+        const model = config.get<string>("inlineModel") ?? "haiku";
+        statusBarManager?.setModel(model);
+      }
+    })
   );
-  statusBarItem.command = "sidekick.toggle";
-  updateStatusBar();
-  statusBarItem.show();
-  context.subscriptions.push(statusBarItem);
 
-  // Register inline completion provider
-  const provider = new SidekickInlineCompletionProvider();
-  const disposable = vscode.languages.registerInlineCompletionItemProvider(
+  // Initialize auth service
+  authService = new AuthService(context);
+  context.subscriptions.push(authService);
+
+  // Initialize completion service (depends on authService)
+  completionService = new CompletionService(authService);
+  context.subscriptions.push(completionService);
+
+  // Register inline completion provider using CompletionService
+  const inlineProvider = new InlineCompletionProvider(completionService);
+  const inlineDisposable = vscode.languages.registerInlineCompletionItemProvider(
     { pattern: "**" }, // All files
-    provider
+    inlineProvider
   );
-  context.subscriptions.push(disposable);
+  context.subscriptions.push(inlineDisposable);
 
   // Register commands
   context.subscriptions.push(
     vscode.commands.registerCommand("sidekick.toggle", () => {
       enabled = !enabled;
-      updateStatusBar();
+      if (enabled) {
+        statusBarManager?.setConnected();
+      } else {
+        statusBarManager?.setDisconnected();
+      }
       vscode.window.showInformationMessage(
         `Sidekick: ${enabled ? "Enabled" : "Disabled"}`
       );
+    })
+  );
+
+  // Register show logs command
+  context.subscriptions.push(
+    vscode.commands.registerCommand("sidekick.showLogs", () => {
+      showLog();
+    })
+  );
+
+  // Register status bar menu command
+  context.subscriptions.push(
+    vscode.commands.registerCommand("sidekick.showMenu", async () => {
+      const items = [
+        {
+          label: enabled ? "$(circle-slash) Disable" : "$(sparkle) Enable",
+          description: enabled ? "Turn off inline completions" : "Turn on inline completions",
+          action: "toggle",
+        },
+        {
+          label: "$(gear) Configure Extension",
+          description: "Open Sidekick settings",
+          action: "configure",
+        },
+        {
+          label: "$(output) View Logs",
+          description: "Open the Sidekick output channel",
+          action: "logs",
+        },
+        {
+          label: "$(plug) Test Connection",
+          description: "Verify Claude API connection",
+          action: "test",
+        },
+        {
+          label: "$(key) Set API Key",
+          description: "Configure Anthropic API key",
+          action: "apiKey",
+        },
+      ];
+
+      const selected = await vscode.window.showQuickPick(items, {
+        placeHolder: "Sidekick Options",
+      });
+
+      if (selected) {
+        switch (selected.action) {
+          case "toggle":
+            vscode.commands.executeCommand("sidekick.toggle");
+            break;
+          case "configure":
+            vscode.commands.executeCommand("workbench.action.openSettings", "sidekick");
+            break;
+          case "logs":
+            showLog();
+            break;
+          case "test":
+            vscode.commands.executeCommand("sidekick.testConnection");
+            break;
+          case "apiKey":
+            vscode.commands.executeCommand("sidekick.setApiKey");
+            break;
+        }
+      }
     })
   );
 
@@ -114,6 +185,52 @@ export function activate(context: vscode.ExtensionContext) {
     )
   );
 
+  // Register set API key command
+  context.subscriptions.push(
+    vscode.commands.registerCommand("sidekick.setApiKey", async () => {
+      const key = await vscode.window.showInputBox({
+        prompt: "Enter your Anthropic API Key",
+        placeHolder: "sk-ant-...",
+        password: true,
+        ignoreFocusOut: true,
+      });
+
+      if (key) {
+        await authService?.getSecretsManager().setApiKey(key);
+        vscode.window.showInformationMessage("API key saved securely.");
+      }
+    })
+  );
+
+  // Register test connection command
+  context.subscriptions.push(
+    vscode.commands.registerCommand("sidekick.testConnection", async () => {
+      if (!authService) {
+        vscode.window.showErrorMessage("Auth service not initialized");
+        return;
+      }
+
+      statusBarManager?.setLoading('Testing connection');
+
+      const result = await vscode.window.withProgress(
+        {
+          location: vscode.ProgressLocation.Notification,
+          title: "Testing connection...",
+          cancellable: false,
+        },
+        async () => authService!.testConnection()
+      );
+
+      if (result.success) {
+        statusBarManager?.setConnected();
+        vscode.window.showInformationMessage(result.message);
+      } else {
+        statusBarManager?.setError(result.message);
+        vscode.window.showErrorMessage(result.message);
+      }
+    })
+  );
+
   // Register transform selected code command
   context.subscriptions.push(
     vscode.commands.registerCommand(
@@ -128,19 +245,17 @@ export function activate(context: vscode.ExtensionContext) {
         const instruction = await vscode.window.showInputBox({
           prompt: "How should this code be transformed?",
           placeHolder: "e.g., Add error handling, Convert to async/await, Add types",
+          ignoreFocusOut: true,
         });
 
         if (!instruction) {
           return; // User cancelled
         }
 
-        const selectedText = editor.document.getText(editor.selection);
         const language = editor.document.languageId;
-        const filename = editor.document.fileName.split("/").pop() || "unknown";
         const config = vscode.workspace.getConfiguration("sidekick");
-        const serverUrl = config.get<string>("serverUrl") || "http://localhost:3456";
-        const model = config.get<string>("transformModel") || "opus";
-        const contextLines = config.get<number>("transformContextLines") || 50;
+        const model = config.get<string>("transformModel") ?? "opus";
+        const contextLines = config.get<number>("transformContextLines") ?? 50;
 
         // Get context before selection
         const selectionStart = editor.selection.start;
@@ -163,340 +278,77 @@ export function activate(context: vscode.ExtensionContext) {
         );
         const suffix = editor.document.getText(suffixRange);
 
-        await vscode.window.withProgress(
-          {
-            location: vscode.ProgressLocation.Notification,
-            title: "Sidekick: Transforming code...",
-            cancellable: true,
-          },
-          async (progress, token) => {
-            const result = await fetchTransform(serverUrl, {
-              code: selectedText,
-              instruction,
-              language,
-              filename,
-              model,
-              prefix,
-              suffix,
-            });
+        // Capture selection state before async operation
+        const originalSelection = editor.selection;
+        const selectedText = editor.document.getText(originalSelection);
 
-            if (token.isCancellationRequested) {
-              return;
-            }
+        statusBarManager?.setLoading("Transforming");
 
-            if (result.statusCode === 429) {
-              vscode.window.showWarningMessage(
-                "Rate limited. Please wait a moment."
-              );
-              return;
-            }
+        try {
+          log(`Transform starting: model=${model}, language=${language}`);
 
-            if (result.error) {
-              vscode.window.showErrorMessage(`Transform failed: ${result.error}`);
-              return;
-            }
+          // Build prompt using prompt templates
+          const prompt =
+            getTransformSystemPrompt() +
+            "\n\n" +
+            getTransformUserPrompt(selectedText, instruction, language, prefix, suffix);
 
-            if (!result.modified_code) {
-              vscode.window.showWarningMessage("No transformation returned");
-              return;
-            }
+          log(`Calling authService.complete...`);
 
-            // Replace selection with modified code
-            await editor.edit((editBuilder) => {
-              editBuilder.replace(editor.selection, result.modified_code);
-            });
+          // Use AuthService instead of HTTP
+          const result = await authService!.complete(prompt, {
+            model,
+            maxTokens: 4096,
+            timeout: 60000, // Transforms can take longer
+          });
+
+          log(`Transform completed, result length: ${result.length}`);
+
+          // Clean the response
+          const cleaned = cleanTransformResponse(result);
+          if (!cleaned) {
+            vscode.window.showWarningMessage("No transformation returned");
+            statusBarManager?.setConnected();
+            return;
           }
-        );
+
+          // Verify selection hasn't changed
+          if (!editor.selection.isEqual(originalSelection)) {
+            vscode.window.showWarningMessage(
+              "Selection changed during transform. Please try again."
+            );
+            statusBarManager?.setConnected();
+            return;
+          }
+
+          // Apply the edit
+          const success = await editor.edit((editBuilder) => {
+            editBuilder.replace(originalSelection, cleaned);
+          });
+
+          if (success) {
+            statusBarManager?.setConnected();
+          } else {
+            statusBarManager?.setError("Edit failed");
+            vscode.window.showErrorMessage("Failed to apply transformation");
+          }
+        } catch (error) {
+          logError("Transform failed", error);
+          const message = error instanceof Error ? error.message : "Unknown error";
+          statusBarManager?.setError(message);
+          vscode.window.showErrorMessage(`Transform failed: ${message}`);
+        }
       }
     )
   );
 }
 
 /**
- * Updates the status bar item to reflect the current enabled state.
- */
-function updateStatusBar(): void {
-  statusBarItem.text = enabled ? "$(sparkle) Sidekick" : "$(sparkle-off) Sidekick";
-  statusBarItem.tooltip = `Sidekick for Max: ${enabled ? "Enabled" : "Disabled"} (click to toggle)`;
-}
-
-/**
- * Inline completion provider that fetches suggestions from the server.
- *
- * This provider implements VS Code's InlineCompletionItemProvider interface
- * to show AI-generated code suggestions as ghost text in the editor.
- */
-class SidekickInlineCompletionProvider
-  implements vscode.InlineCompletionItemProvider
-{
-  /**
-   * Provides inline completion items for the current cursor position.
-   *
-   * @param document - The text document being edited
-   * @param position - The cursor position
-   * @param context - The inline completion context
-   * @param token - Cancellation token for aborting the request
-   * @returns Array of inline completion items or undefined
-   */
-  async provideInlineCompletionItems(
-    document: vscode.TextDocument,
-    position: vscode.Position,
-    context: vscode.InlineCompletionContext,
-    token: vscode.CancellationToken
-  ): Promise<vscode.InlineCompletionItem[] | undefined> {
-    // Check if enabled
-    const config = vscode.workspace.getConfiguration("sidekick");
-    if (!enabled || !config.get("enabled")) {
-      return undefined;
-    }
-
-    // Debounce
-    const debounceMs = config.get<number>("debounceMs") || 300;
-    const requestId = ++lastRequestId;
-
-    await new Promise((resolve) => {
-      if (debounceTimer) {
-        clearTimeout(debounceTimer);
-      }
-      debounceTimer = setTimeout(resolve, debounceMs);
-    });
-
-    // Check if this request is still valid
-    if (requestId !== lastRequestId || token.isCancellationRequested) {
-      return undefined;
-    }
-
-    try {
-      const completion = await this.getCompletion(document, position, config);
-
-      if (
-        !completion ||
-        token.isCancellationRequested ||
-        requestId !== lastRequestId
-      ) {
-        return undefined;
-      }
-
-      return [
-        new vscode.InlineCompletionItem(
-          completion,
-          new vscode.Range(position, position)
-        ),
-      ];
-    } catch (error) {
-      console.error("Completion error:", error);
-      return undefined;
-    }
-  }
-
-  /**
-   * Fetches a code completion from the server.
-   *
-   * @param document - The text document being edited
-   * @param position - The cursor position
-   * @param config - The extension configuration
-   * @returns The completion text or undefined if no completion available
-   */
-  private async getCompletion(
-    document: vscode.TextDocument,
-    position: vscode.Position,
-    config: vscode.WorkspaceConfiguration
-  ): Promise<string | undefined> {
-    const serverUrl =
-      config.get<string>("serverUrl") || "http://localhost:3456";
-    const maxContextLines = config.get<number>("inlineContextLines") || 30;
-    const multiline = config.get<boolean>("multiline") || false;
-    const model = config.get<string>("inlineModel") || "haiku";
-
-    // Get context around cursor
-    const startLine = Math.max(0, position.line - maxContextLines);
-    const endLine = Math.min(
-      document.lineCount - 1,
-      position.line + maxContextLines
-    );
-
-    // Get prefix (everything before cursor)
-    const prefixRange = new vscode.Range(
-      new vscode.Position(startLine, 0),
-      position
-    );
-    const prefix = document.getText(prefixRange);
-
-    // Get suffix (everything after cursor)
-    const suffixRange = new vscode.Range(
-      position,
-      new vscode.Position(endLine, document.lineAt(endLine).text.length)
-    );
-    const suffix = document.getText(suffixRange);
-
-    // Detect language
-    const language = document.languageId;
-    const filename = document.fileName.split("/").pop() || "unknown";
-
-    // Make request to completion server
-    const response = await this.fetchCompletion(serverUrl, {
-      prefix,
-      suffix,
-      language,
-      filename,
-      model,
-      multiline,
-    });
-
-    // Log request ID for debugging correlation with server logs
-    if (response.requestId) {
-      console.debug(`Completion request ${response.requestId}`);
-    }
-
-    // Handle rate limiting
-    if (response.statusCode === 429) {
-      vscode.window.showWarningMessage(
-        "Rate limited. Please wait a moment."
-      );
-      return undefined;
-    }
-
-    if (response.error) {
-      console.error(
-        `Completion server error${response.requestId ? ` [${response.requestId}]` : ""}:`,
-        response.error
-      );
-      return undefined;
-    }
-
-    return response.completion || undefined;
-  }
-
-  /**
-   * Makes an HTTP request to the completion server.
-   *
-   * @param serverUrl - The base URL of the completion server
-   * @param body - The request payload containing code context
-   * @returns Promise resolving to the server response
-   */
-  private fetchCompletion(
-    serverUrl: string,
-    body: object
-  ): Promise<CompletionResponse> {
-    return new Promise((resolve) => {
-      const url = new URL("/inline", serverUrl);
-      const isHttps = url.protocol === "https:";
-      const httpModule = isHttps ? https : http;
-
-      const postData = JSON.stringify(body);
-
-      const options = {
-        hostname: url.hostname,
-        port: url.port || (isHttps ? 443 : 80),
-        path: url.pathname,
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Content-Length": Buffer.byteLength(postData),
-        },
-        timeout: 10000,
-      };
-
-      const req = httpModule.request(options, (res) => {
-        let data = "";
-        res.on("data", (chunk) => (data += chunk));
-        res.on("end", () => {
-          try {
-            const parsed = JSON.parse(data);
-            resolve({ ...parsed, statusCode: res.statusCode });
-          } catch {
-            resolve({
-              completion: "",
-              error: "Invalid JSON response",
-              statusCode: res.statusCode,
-            });
-          }
-        });
-      });
-
-      req.on("error", (error) => {
-        resolve({ completion: "", error: error.message });
-      });
-
-      req.on("timeout", () => {
-        req.destroy();
-        resolve({ completion: "", error: "Request timeout" });
-      });
-
-      req.write(postData);
-      req.end();
-    });
-  }
-}
-
-/**
- * Makes an HTTP request to the transform endpoint.
- *
- * @param serverUrl - The base URL of the server
- * @param body - The request payload containing code and instruction
- * @returns Promise resolving to the server response
- */
-function fetchTransform(
-  serverUrl: string,
-  body: object
-): Promise<TransformResponse> {
-  return new Promise((resolve) => {
-    const url = new URL("/transform", serverUrl);
-    const isHttps = url.protocol === "https:";
-    const httpModule = isHttps ? https : http;
-
-    const postData = JSON.stringify(body);
-
-    const options = {
-      hostname: url.hostname,
-      port: url.port || (isHttps ? 443 : 80),
-      path: url.pathname,
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Content-Length": Buffer.byteLength(postData),
-      },
-      timeout: 20000, // 20 second timeout for transforms
-    };
-
-    const req = httpModule.request(options, (res) => {
-      let data = "";
-      res.on("data", (chunk) => (data += chunk));
-      res.on("end", () => {
-        try {
-          const parsed = JSON.parse(data);
-          resolve({ ...parsed, statusCode: res.statusCode });
-        } catch {
-          resolve({
-            modified_code: "",
-            error: "Invalid JSON response",
-            statusCode: res.statusCode,
-          });
-        }
-      });
-    });
-
-    req.on("error", (error) => {
-      resolve({ modified_code: "", error: error.message });
-    });
-
-    req.on("timeout", () => {
-      req.destroy();
-      resolve({ modified_code: "", error: "Request timeout" });
-    });
-
-    req.write(postData);
-    req.end();
-  });
-}
-
-/**
  * Deactivates the extension.
  *
- * Called when the extension is deactivated. Cleans up any pending timers.
+ * Called when the extension is deactivated.
+ * Cleanup handled via context.subscriptions (AuthService, CompletionService).
  */
 export function deactivate(): void {
-  if (debounceTimer) {
-    clearTimeout(debounceTimer);
-  }
+  // Cleanup handled via context.subscriptions (AuthService, CompletionService)
 }

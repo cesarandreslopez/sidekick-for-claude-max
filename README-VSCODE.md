@@ -5,7 +5,9 @@ VS Code extension that provides AI-powered inline code completions and transform
 ## Prerequisites
 
 - **VS Code** v1.85.0 or higher
-- **Sidekick Server** running (see [README-SERVER.md](README-SERVER.md))
+- **One of the following**:
+  - **Claude Max subscription**: Claude Code CLI installed and authenticated (`npm install -g @anthropic-ai/claude-code && claude auth`)
+  - **Anthropic API key**: Set via the extension or `ANTHROPIC_API_KEY` environment variable
 
 ## Installation
 
@@ -70,39 +72,46 @@ Transform selected code using natural language instructions:
 3. Enter your instruction (e.g., "Add error handling", "Convert to async/await")
 4. The selection is replaced with the transformed code
 
-### Toggle On/Off
+### Status Bar Menu
 
-Toggle completions via:
+Click "Sidekick" in the bottom-right status bar to open the menu:
 
-- **Status Bar**: Click "Sidekick" in the bottom-right status bar
-- **Command Palette**: "Sidekick: Toggle Inline Completions"
+- **Enable/Disable** - Toggle inline completions on/off
+- **Configure Extension** - Open Sidekick settings
+- **View Logs** - Open the output channel for debugging
+- **Test Connection** - Verify Claude API connection
+- **Set API Key** - Configure an Anthropic API key
 
-The status bar shows:
-- `$(sparkle) Sidekick` - Enabled
-- `$(sparkle-off) Sidekick` - Disabled
+The status bar icon shows:
+- `$(sparkle) Sidekick [model]` - Enabled (shows current inline model)
+- `$(circle-slash) Sidekick` - Disabled
+- `$(sync~spin) Sidekick` - Loading/processing
+- `$(warning) Sidekick` - Error state
 
 ## Configuration
 
-Open VS Code Settings (`Ctrl+,` / `Cmd+,`) and search for "Sidekick".
+Open VS Code Settings (`Ctrl+,` / `Cmd+,`) and search for "Sidekick", or click the status bar and select "Configure Extension".
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `sidekick.serverUrl` | `http://localhost:3456` | URL of the Sidekick server |
+| `sidekick.authMode` | `max-subscription` | Authentication: `max-subscription` (Claude Code CLI) or `api-key` |
 | `sidekick.enabled` | `true` | Enable/disable inline completions |
-| `sidekick.debounceMs` | `300` | Delay before requesting completion (ms) |
+| `sidekick.debounceMs` | `1000` | Delay before requesting completion (ms) |
 | `sidekick.inlineContextLines` | `30` | Lines of context before/after cursor for inline |
 | `sidekick.transformContextLines` | `50` | Lines of context before/after selection for transforms |
-| `sidekick.multiline` | `false` | Enable multi-line completions |
-| `sidekick.inlineModel` | `haiku` | Model for inline: `haiku` (fast) or `sonnet` (quality) |
+| `sidekick.multiline` | `false` | Enable multi-line completions (prose files always use multiline) |
+| `sidekick.inlineModel` | `haiku` | Model for inline: `haiku`, `sonnet`, or `opus` |
 | `sidekick.transformModel` | `opus` | Model for transforms: `opus`, `sonnet`, or `haiku` |
+
+> **Note:** Prose files (Markdown, plaintext, HTML, XML, LaTeX, etc.) automatically use multiline mode regardless of the setting.
 
 ### Example settings.json
 
 ```json
 {
-  "sidekick.serverUrl": "http://localhost:3456",
+  "sidekick.authMode": "max-subscription",
   "sidekick.enabled": true,
-  "sidekick.debounceMs": 300,
+  "sidekick.debounceMs": 1000,
   "sidekick.inlineContextLines": 30,
   "sidekick.transformContextLines": 50,
   "sidekick.multiline": false,
@@ -111,11 +120,24 @@ Open VS Code Settings (`Ctrl+,` / `Cmd+,`) and search for "Sidekick".
 }
 ```
 
+### Authentication Modes
+
+**Max Subscription (default):**
+- Uses Claude Code CLI for authentication
+- Requires: `npm install -g @anthropic-ai/claude-code && claude auth`
+- No API costs - uses your Max subscription
+
+**API Key:**
+- Uses Anthropic API directly
+- Set key via "Sidekick: Set API Key" command or `ANTHROPIC_API_KEY` environment variable
+- Standard API pricing applies
+
 ### Model Selection
 
 **For Inline Completions:**
-- **haiku** (default): Faster completions, lower latency. Best for quick suggestions.
-- **sonnet**: Higher quality completions. Best for complex code.
+- **haiku** (default): Fastest completions, lowest latency. Best for quick suggestions.
+- **sonnet**: Balanced speed and quality.
+- **opus**: Highest quality. Best for complex code.
 
 **For Transforms:**
 - **opus** (default): Highest quality transformations. Best for refactoring.
@@ -126,37 +148,41 @@ Open VS Code Settings (`Ctrl+,` / `Cmd+,`) and search for "Sidekick".
 
 | Command | Keybinding | Description |
 |---------|------------|-------------|
-| Sidekick: Toggle Inline Completions | Click status bar | Toggle completions on/off |
+| Sidekick: Show Menu | Click status bar | Open the Sidekick menu |
+| Sidekick: Toggle Inline Completions | - | Toggle completions on/off |
 | Sidekick: Trigger Completion | `Ctrl+Shift+Space` / `Cmd+Shift+Space` | Manually trigger a completion |
 | Sidekick: Transform Selected Code | `Ctrl+Shift+M` / `Cmd+Shift+M` | Transform selected code |
+| Sidekick: View Logs | - | Open the output channel |
+| Sidekick: Test Connection | - | Verify API connection |
+| Sidekick: Set API Key | - | Configure Anthropic API key |
 
 ## How It Works
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                    VS Code Editor                       │
-├─────────────────────────────────────────────────────────┤
-│  User types code                                        │
-│       │                                                 │
-│       ▼                                                 │
-│  SidekickInlineCompletionProvider                       │
-│       │                                                 │
-│       ├──► Debounce (300ms default)                    │
-│       │                                                 │
-│       ├──► Extract context (prefix + suffix)           │
-│       │                                                 │
-│       ▼                                                 │
-│  POST /inline ───────────────────────► Server           │
-│                                                         │
-│  Display ghost text ◄─────────────────── Response       │
-│       │                                                 │
-│       ▼                                                 │
-│  User accepts (Tab) or dismisses (Esc)                 │
-└─────────────────────────────────────────────────────────┘
++---------------------------------------------------------+
+|                    VS Code Editor                       |
++---------------------------------------------------------+
+|  User types code                                        |
+|       |                                                 |
+|       v                                                 |
+|  InlineCompletionProvider                               |
+|       |                                                 |
+|       +---> Debounce (1000ms default)                   |
+|       |                                                 |
+|       +---> Extract context (prefix + suffix)           |
+|       |                                                 |
+|       v                                                 |
+|  Claude API call (Max subscription or API key)          |
+|                                                         |
+|  Display ghost text <------------------ Response        |
+|       |                                                 |
+|       v                                                 |
+|  User accepts (Tab) or dismisses (Esc)                  |
++---------------------------------------------------------+
 ```
 
 1. **Context Capture**: The extension captures code around the cursor (configurable lines before/after)
-2. **Debouncing**: Requests are debounced to avoid overwhelming the server during rapid typing
+2. **Debouncing**: Requests are debounced to avoid overwhelming the API during rapid typing
 3. **Request Cancellation**: Stale requests are automatically cancelled when new keystrokes arrive
 4. **Ghost Text**: Completions appear as ghost text that can be accepted with Tab
 
@@ -164,31 +190,41 @@ Open VS Code Settings (`Ctrl+,` / `Cmd+,`) and search for "Sidekick".
 
 ### No completions appearing
 
-1. **Check the server is running**:
+1. **Test the connection**:
+   - Click status bar → "Test Connection"
+   - Or run "Sidekick: Test Connection" from Command Palette
+
+2. **Check authentication** (for Max subscription):
    ```bash
-   curl http://localhost:3456/health
+   claude auth status
    ```
 
-2. **Verify extension is enabled**:
+3. **Verify extension is enabled**:
    - Check status bar shows `$(sparkle) Sidekick`
    - Check Settings: `sidekick.enabled` is `true`
 
-3. **Check VS Code Output**:
-   - Open Output panel (`Ctrl+Shift+U` / `Cmd+Shift+U`)
-   - Select "Extension Host" from dropdown
-   - Look for "Sidekick" messages
+4. **View logs for errors**:
+   - Click status bar → "View Logs"
+   - Or run "Sidekick: View Logs" from Command Palette
+   - Look for error messages or failed requests
 
 ### Slow completions
 
 - Reduce `inlineContextLines` to send less context
-- Use `haiku` model instead of `sonnet`
+- Use `haiku` model (fastest)
 - Increase `debounceMs` to reduce request frequency
 
-### Server connection errors
+### Authentication errors
 
-- Verify `serverUrl` matches where your server is running
-- Check for firewall or proxy issues
-- Ensure server has CORS headers (built-in by default)
+**For Max subscription:**
+- Re-authenticate: `claude auth`
+- Check Claude Max subscription is active
+- Ensure Claude Code CLI is installed globally
+
+**For API key:**
+- Run "Sidekick: Set API Key" to reconfigure
+- Verify key is valid at console.anthropic.com
+- Check `ANTHROPIC_API_KEY` environment variable if using that method
 
 ## Development
 
@@ -218,9 +254,23 @@ npm run lint:fix    # Auto-fix issues
 ```
 sidekick-vscode/
 ├── src/
-│   ├── extension.ts       # Main extension entry point
-│   └── extension.test.ts  # Tests
-├── package.json           # Extension manifest & configuration
-├── tsconfig.json          # TypeScript configuration
-└── out/                   # Compiled JavaScript (generated)
+│   ├── extension.ts                    # Main extension entry point
+│   ├── providers/
+│   │   └── InlineCompletionProvider.ts # VS Code completion provider
+│   ├── services/
+│   │   ├── AuthService.ts              # Authentication orchestration
+│   │   ├── CompletionService.ts        # Completion logic & caching
+│   │   ├── CompletionCache.ts          # LRU cache for completions
+│   │   ├── StatusBarManager.ts         # Status bar UI management
+│   │   ├── Logger.ts                   # Output channel logging
+│   │   └── clients/
+│   │       ├── MaxSubscriptionClient.ts # Claude Code CLI integration
+│   │       └── ApiKeyClient.ts         # Direct API key client
+│   ├── utils/
+│   │   └── prompts.ts                  # Prompt templates & response cleaning
+│   └── types.ts                        # TypeScript type definitions
+├── package.json                        # Extension manifest & configuration
+├── tsconfig.json                       # TypeScript configuration
+├── esbuild.js                          # Build configuration
+└── out/                                # Compiled JavaScript (generated)
 ```

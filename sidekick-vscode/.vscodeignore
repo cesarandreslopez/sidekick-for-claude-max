@@ -6,6 +6,7 @@ src/**
 .gitignore
 tsconfig.json
 eslint.config.js
+esbuild.js
 vitest.config.ts
 vitest.config.js
 vitest.config.js.map
@@ -18,8 +19,16 @@ out/extension.test.js.map
 
 # Dependencies and build artifacts
 node_modules/**
+!node_modules/@anthropic-ai/**
 dist/**
 
 # Other
 *.vsix
 .npm
+*.tsbuildinfo
+
+# Keep these for marketplace
+# README.md - Main extension documentation
+# CHANGELOG.md - Version history
+# LICENSE - License file
+# images/ - Extension icon

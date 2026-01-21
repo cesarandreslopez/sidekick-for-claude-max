@@ -1,8 +1,8 @@
 {
   "name": "sidekick-for-max",
   "displayName": "Sidekick for Max",
-  "description": "AI code completions and transformations powered by your Claude Max subscription",
-  "version": "0.2.0",
+  "description": "Copilot-style AI code completions using your Claude Max subscription - no extra cost. Fast inline suggestions with Haiku, powerful transforms with Opus.",
+  "version": "0.3.0",
   "publisher": "CesarAndresLopez",
   "author": {
     "name": "Cesar Andres Lopez",
@@ -10,6 +10,10 @@
   },
   "license": "MIT",
   "icon": "images/icon.png",
+  "galleryBanner": {
+    "color": "#1a1a2e",
+    "theme": "dark"
+  },
   "repository": {
     "type": "git",
     "url": "https://github.com/cesarandreslopez/sidekick-for-claude-max"
@@ -25,22 +29,37 @@
     "completion",
     "anthropic",
     "code-completion",
-    "inline-completion"
+    "inline-completion",
+    "autocomplete",
+    "claude-max",
+    "ai-assistant",
+    "code-transform"
   ],
   "engines": {
     "vscode": "^1.85.0"
   },
-  "categories": ["Machine Learning", "Programming Languages"],
-  "activationEvents": ["onStartupFinished"],
+  "categories": [
+    "Machine Learning",
+    "Programming Languages",
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
   "main": "./out/extension.js",
   "contributes": {
     "configuration": {
       "title": "Sidekick for Max",
       "properties": {
-        "sidekick.serverUrl": {
+        "sidekick.authMode": {
           "type": "string",
-          "default": "http://localhost:3456",
-          "description": "URL of the Sidekick server"
+          "enum": ["api-key", "max-subscription"],
+          "default": "max-subscription",
+          "description": "Authentication mode for Claude API",
+          "enumDescriptions": [
+            "Use an Anthropic API key (requires ANTHROPIC_API_KEY env var or configured key)",
+            "Use Claude Max subscription (requires Claude Code CLI installed and authenticated)"
+          ]
         },
         "sidekick.enabled": {
           "type": "boolean",
@@ -49,7 +68,7 @@
         },
         "sidekick.debounceMs": {
           "type": "number",
-          "default": 300,
+          "default": 1000,
           "description": "Debounce delay in milliseconds before requesting completion"
         },
         "sidekick.inlineContextLines": {
@@ -65,21 +84,30 @@
         "sidekick.multiline": {
           "type": "boolean",
           "default": false,
-          "description": "Enable multi-line completions (up to 10 lines). When disabled, completions are limited to 1-3 lines."
+          "description": "Enable multi-line completions (up to 10 lines). When disabled, completions are limited to 1-3 lines. Note: Prose files (Markdown, plaintext, etc.) always use multiline mode."
         },
         "sidekick.inlineModel": {
           "type": "string",
-          "enum": ["haiku", "sonnet"],
+          "enum": [
+            "haiku",
+            "sonnet",
+            "opus"
+          ],
           "default": "haiku",
-          "description": "Model for inline completions (haiku=fast, sonnet=quality)",
+          "description": "Model for inline completions (haiku=fast, sonnet=balanced, opus=quality)",
           "enumDescriptions": [
-            "Claude Haiku - Faster completions (recommended for inline)",
-            "Claude Sonnet - Higher quality, slower"
+            "Claude Haiku - Fastest completions (recommended for inline)",
+            "Claude Sonnet - Balanced speed and quality",
+            "Claude Opus - Highest quality, slower"
           ]
         },
         "sidekick.transformModel": {
           "type": "string",
-          "enum": ["haiku", "sonnet", "opus"],
+          "enum": [
+            "haiku",
+            "sonnet",
+            "opus"
+          ],
           "default": "opus",
           "description": "Model for code transformations (opus=highest quality, sonnet=balanced, haiku=fast)",
           "enumDescriptions": [
@@ -102,6 +130,22 @@
       {
         "command": "sidekick.transform",
         "title": "Sidekick: Transform Selected Code"
+      },
+      {
+        "command": "sidekick.setApiKey",
+        "title": "Sidekick: Set API Key"
+      },
+      {
+        "command": "sidekick.testConnection",
+        "title": "Sidekick: Test Connection"
+      },
+      {
+        "command": "sidekick.showLogs",
+        "title": "Sidekick: View Logs"
+      },
+      {
+        "command": "sidekick.showMenu",
+        "title": "Sidekick: Show Menu"
       }
     ],
     "keybindings": [
@@ -120,9 +164,10 @@
     ]
   },
   "scripts": {
-    "vscode:prepublish": "npm run compile",
-    "compile": "tsc -p ./",
-    "watch": "tsc -watch -p ./",
+    "vscode:prepublish": "npm run build",
+    "build": "node esbuild.js --production",
+    "compile": "node esbuild.js",
+    "watch": "node esbuild.js --watch",
     "lint": "eslint src/",
     "lint:fix": "eslint src/ --fix",
     "test": "vitest run",
@@ -131,9 +176,14 @@
   "devDependencies": {
     "@types/node": "^20.0.0",
     "@types/vscode": "^1.85.0",
+    "esbuild": "^0.27.2",
     "eslint": "^9.0.0",
-    "typescript-eslint": "^8.0.0",
     "typescript": "^5.0.0",
+    "typescript-eslint": "^8.0.0",
     "vitest": "^2.0.0"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.2.12",
+    "@anthropic-ai/sdk": "^0.71.2"
   }
 }
