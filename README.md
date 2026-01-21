@@ -6,6 +6,7 @@
 
 <p align="center">
   <a href="https://marketplace.visualstudio.com/items?itemName=CesarAndresLopez.sidekick-for-max"><img src="https://img.shields.io/visual-studio-marketplace/v/CesarAndresLopez.sidekick-for-max?label=VS%20Code%20Marketplace" alt="VS Code Marketplace"></a>
+  <a href="https://open-vsx.org/extension/cesarandreslopez/sidekick-for-max"><img src="https://img.shields.io/open-vsx/v/cesarandreslopez/sidekick-for-max?label=Open%20VSX" alt="Open VSX"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT"></a>
   <a href="https://github.com/cesarandreslopez/sidekick-for-claude-max/actions/workflows/ci.yml"><img src="https://github.com/cesarandreslopez/sidekick-for-claude-max/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
 </p>
@@ -60,8 +61,8 @@ The extension uses the Anthropic SDK directly to call Claude. If you have a Clau
    ```
 
 2. Install the extension:
-   - **VS Code**: Install from the [Marketplace](https://marketplace.visualstudio.com/items?itemName=CesarAndresLopez.sidekick-for-max)
-   - **Cursor/Other forks**: See [Installing in VS Code Forks](#installing-in-vs-code-forks) below
+   - **VS Code**: Install from the [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=CesarAndresLopez.sidekick-for-max)
+   - **Cursor/VSCodium**: Install from [Open VSX](https://open-vsx.org/extension/cesarandreslopez/sidekick-for-max) or see [Installing in VS Code Forks](#installing-in-vs-code-forks)
 
 3. Start coding - completions appear automatically as you type
 
@@ -103,15 +104,19 @@ This is standard VS Code extension behavior. For most workflows it's transparent
 
 ## Installing in VS Code Forks
 
-The extension works in Cursor, VSCodium, and other VS Code forks. Since these editors can't install directly from the VS Code Marketplace, you'll need to install via VSIX:
+The extension works in Cursor, VSCodium, and other VS Code forks.
 
-### Option 1: Download from GitHub Releases
+### Option 1: Open VSX (Recommended)
+
+Install directly from [Open VSX](https://open-vsx.org/extension/cesarandreslopez/sidekick-for-max) - the open marketplace used by Cursor, VSCodium, and other VS Code forks.
+
+### Option 2: Download from GitHub Releases
 
 1. Download the latest `.vsix` file from [Releases](https://github.com/cesarandreslopez/sidekick-for-claude-max/releases)
 2. In your editor: Extensions → `...` menu → "Install from VSIX..."
 3. Select the downloaded file
 
-### Option 2: Build from Source
+### Option 3: Build from Source
 
 ```bash
 git clone https://github.com/cesarandreslopez/sidekick-for-claude-max.git

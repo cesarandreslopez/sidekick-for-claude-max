@@ -45,10 +45,9 @@ The extension uses Haiku by default for inline completions - it's fast, responsi
    Follow the prompts to authenticate with your Claude Max subscription.
 
 2. Install the VS Code extension:
-   - Download the latest `.vsix` file from the releases page
-   - In VS Code, open the Command Palette (`Ctrl+Shift+P`)
-   - Run "Extensions: Install from VSIX..."
-   - Select the downloaded `.vsix` file
+   - **VS Code**: Install from the [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=CesarAndresLopez.sidekick-for-max)
+   - **Cursor/VSCodium**: Install from [Open VSX](https://open-vsx.org/extension/cesarandreslopez/sidekick-for-max)
+   - **Manual**: Download `.vsix` from [GitHub Releases](https://github.com/cesarandreslopez/sidekick-for-claude-max/releases) → Extensions → "Install from VSIX..."
 
 3. Start typing in any file - completions should appear as ghost text
 
