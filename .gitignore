@@ -49,3 +49,6 @@ venv/
 .mypy_cache/
 .ruff_cache/
 CLAUDE.md
+
+# Planning files (local only)
+.planning/
