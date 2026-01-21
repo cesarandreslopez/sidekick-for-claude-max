@@ -2,7 +2,7 @@
   "name": "sidekick-for-max",
   "displayName": "Sidekick for Max",
   "description": "Copilot-style AI code completions using your Claude Max subscription - no extra cost. Fast inline suggestions with Haiku, powerful transforms with Opus.",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "publisher": "CesarAndresLopez",
   "author": {
     "name": "Cesar Andres Lopez",

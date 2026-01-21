@@ -14,7 +14,9 @@
   AI-powered inline code completions and transformations for VS Code, powered by your Claude Max subscription.
 </p>
 
-<!-- TODO: Add demo GIF showing completions in action -->
+<p align="center">
+  <img src="assets/inline_transforms.gif" alt="Sidekick inline completions demo" width="800">
+</p>
 
 **Claude Code is incredible for complex, multi-file refactoring and agentic workflows.** But sometimes you just want a quick inline completion while typing, or to transform a snippet of code without spinning up a full conversation. And you shouldn't have to pay for yet another subscription to get that.
 
@@ -42,10 +44,14 @@ The extension uses the Anthropic SDK directly to call Claude. If you have a Clau
 
 ### Prerequisites
 
-- Claude Max subscription ($100 or $200/month plan)
-- Claude Code CLI installed and authenticated
+- **Claude Max subscription** (Recommended) OR Anthropic API key
+- Claude Code CLI installed and authenticated (for Max subscription mode)
+
+> **Why Max subscription is recommended:** Inline completions fire frequently as you type. With an API key, these per-token costs add up quickly. With Max ($100-200/month), you're already paying for the tokens—Sidekick just helps you use your unused capacity. No surprise bills.
 
 ### Setup
+
+![Installation demo](assets/installation.gif)
 
 1. Install and authenticate Claude Code CLI:
    ```bash
@@ -64,8 +70,17 @@ The extension uses the Anthropic SDK directly to call Claude. If you have a Clau
 ### Inline Completions
 Get intelligent code suggestions as you type. Uses Haiku by default for fast, lightweight completions that won't drain your quota.
 
+![Inline completions demo](assets/inline_transforms.gif)
+
 ### Code Transforms
 Select code, press `Ctrl+Shift+M`, and describe how to transform it. Uses Opus by default for high-quality refactoring.
+
+![Code transforms demo](assets/code_transforms.gif)
+
+### Status Bar Menu
+Click "Sidekick" in the status bar to access logs, test connection, configure settings, and more.
+
+![Logs and configuration](assets/logs_and_configuration.gif)
 
 ## Token Efficiency
 

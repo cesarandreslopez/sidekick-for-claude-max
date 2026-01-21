@@ -2,6 +2,8 @@
 
 AI code completions and transformations powered by your Claude Max subscription.
 
+![Sidekick demo](https://raw.githubusercontent.com/cesarandreslopez/sidekick-for-claude-max/main/assets/inline_transforms.gif)
+
 **Claude Code is incredible for complex, multi-file refactoring and agentic workflows.** But sometimes you just want a quick inline completion while typing, or to transform a snippet of code without spinning up a full conversation. And you shouldn't have to pay for yet another subscription to get that.
 
 If you're already paying for Claude Max, Sidekick lets you use those tokens for fast, Copilot-style completions--no extra cost, no separate account.
@@ -26,8 +28,10 @@ The extension uses Haiku by default for inline completions - it's fast, responsi
 
 ## Prerequisites
 
-- **Claude Max subscription** ($100 or $200/month plan) OR **Anthropic API key**
+- **Claude Max subscription** (Recommended) OR **Anthropic API key**
 - **Claude Code CLI** installed and authenticated (for Max subscription mode)
+
+> **Why Max subscription is recommended:** Inline completions fire frequently as you type. With an API key, these per-token costs add up quickly. With Max ($100-200/month), you're already paying for the tokens—Sidekick just helps you use your unused capacity. No surprise bills.
 
 ## Installation
 
@@ -67,6 +71,8 @@ The extension uses Haiku by default for inline completions - it's fast, responsi
 
 Get intelligent code suggestions as you type. Completions appear as ghost text that you can accept with Tab.
 
+![Inline completions](https://raw.githubusercontent.com/cesarandreslopez/sidekick-for-claude-max/main/assets/inline_transforms.gif)
+
 - Automatic suggestions after a brief pause in typing
 - Manual trigger: `Ctrl+Shift+Space` (Cmd+Shift+Space on Mac)
 - Toggle on/off via status bar or Command Palette
@@ -74,6 +80,8 @@ Get intelligent code suggestions as you type. Completions appear as ghost text t
 ### Transform Selected Code
 
 Transform selected code using natural language instructions.
+
+![Code transforms](https://raw.githubusercontent.com/cesarandreslopez/sidekick-for-claude-max/main/assets/code_transforms.gif)
 
 1. Select the code you want to modify
 2. Press `Ctrl+Shift+M` (Cmd+Shift+M on Mac)
@@ -95,6 +103,9 @@ Transform selected code using natural language instructions.
 ### Status Bar Menu
 
 Click "Sidekick" in the status bar to access:
+
+![Status bar menu](https://raw.githubusercontent.com/cesarandreslopez/sidekick-for-claude-max/main/assets/logs_and_configuration.gif)
+
 - Enable/Disable completions
 - Configure Extension settings
 - View Logs
