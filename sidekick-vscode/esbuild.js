@@ -80,21 +80,37 @@ async function main() {
     logLevel: 'warning',
   });
 
+  // Webview context - Dashboard (Browser)
+  const webviewDashboardCtx = await esbuild.context({
+    entryPoints: ['src/webview/dashboard.ts'],
+    bundle: true,
+    format: 'iife',
+    minify: production,
+    sourcemap: !production,
+    sourcesContent: false,
+    platform: 'browser',
+    outfile: 'out/webview/dashboard.js',
+    target: ['es2020'],
+    logLevel: 'warning',
+  });
+
   // Copy webview assets (CSS files)
   copyWebviewAssets();
 
   if (watch) {
-    await Promise.all([extensionCtx.watch(), webviewRsvpCtx.watch(), webviewExplainCtx.watch(), webviewErrorCtx.watch()]);
+    await Promise.all([extensionCtx.watch(), webviewRsvpCtx.watch(), webviewExplainCtx.watch(), webviewErrorCtx.watch(), webviewDashboardCtx.watch()]);
     console.log('Watching for changes...');
   } else {
     await extensionCtx.rebuild();
     await webviewRsvpCtx.rebuild();
     await webviewExplainCtx.rebuild();
     await webviewErrorCtx.rebuild();
+    await webviewDashboardCtx.rebuild();
     await extensionCtx.dispose();
     await webviewRsvpCtx.dispose();
     await webviewExplainCtx.dispose();
     await webviewErrorCtx.dispose();
+    await webviewDashboardCtx.dispose();
   }
 }
 

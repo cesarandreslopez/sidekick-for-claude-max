@@ -12,7 +12,7 @@
 </p>
 
 <p align="center">
-  Your Claude Max, working harder: completions, transforms, commits, and speed reading.
+  Your Claude Max, working harder: completions, transforms, commits, speed reading, and session monitoring.
 </p>
 
 <p align="center">
@@ -21,7 +21,7 @@
 
 **Claude Code is incredible for complex, multi-file refactoring and agentic workflows.** But sometimes you just want a quick inline completion while typing, or to transform a snippet of code without spinning up a full conversation. And you shouldn't have to pay for yet another subscription to get that.
 
-If you're already paying for Claude Max, Sidekick lets you use those tokens for inline completions, code transforms, AI commit messages, and speed reading with AI explanations—no extra cost, no separate account.
+If you're already paying for Claude Max, Sidekick lets you use those tokens for inline completions, code transforms, AI commit messages, speed reading with AI explanations, and real-time session monitoring—no extra cost, no separate account.
 
 Let's consider the following: 
 
@@ -29,6 +29,7 @@ Let's consider the following:
 
 **Get more value from your Claude Max subscription.** You're paying $100-200/month for Claude Max, but likely have unused capacity in your 5-hour usage windows. Sidekick puts those tokens to work:
 
+- **Monitor your Claude Code sessions** - Real-time dashboard showing token usage, costs, activity timeline, and what Claude is doing in your codebase
 - **No additional cost** - Uses your existing Claude Code CLI authentication
 - **Complements Claude Code CLI** - CLI excels at agentic multi-file tasks; Sidekick handles quick inline completions and transforms
 - **Replace paid alternatives** - Skip the $10-19/month GitHub Copilot subscription; use tokens you're already paying for
@@ -67,6 +68,25 @@ The extension uses the Anthropic SDK directly to call Claude. If you have a Clau
 3. Start coding - completions appear automatically as you type
 
 ## Features
+
+### Claude Code Session Monitor
+Monitor your Claude Code sessions in real-time with a comprehensive analytics dashboard. Click the Session Monitor icon in the activity bar to access all monitoring features.
+
+![Session Monitor demo](assets/session-monitor-demo.gif)
+
+- **Session Analytics Dashboard** - Track token usage, costs, and activity in real-time
+  - Context window gauge showing input/output usage vs. limits
+  - Activity timeline with user prompts, tool calls, and errors
+  - Session selector to switch between active sessions
+  - Tool analytics showing what operations Claude is performing
+- **Mind Map Visualization** - Interactive D3.js graph showing session structure
+  - Visualizes conversation flow and file relationships
+  - Real-time updates as the session progresses
+- **Latest Files Touched** - Tree view of files modified during sessions
+- **Subagents Tree** - Monitor spawned Task agents during complex operations
+- **Status Bar Metrics** - Quick session status in the VS Code status bar
+
+The monitor automatically discovers Claude Code sessions and updates in real-time as Claude works. Perfect for understanding token usage and keeping an eye on costs.
 
 ### Inline Completions
 Get intelligent code suggestions as you type. Uses Haiku by default for fast, lightweight completions that won't drain your quota.

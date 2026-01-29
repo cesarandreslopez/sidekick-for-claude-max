@@ -1,8 +1,8 @@
 {
   "name": "sidekick-for-max",
   "displayName": "Sidekick for Max",
-  "description": "AI-powered code completions, transforms, commit messages, and RSVP speed reading using your Claude Max subscription - no extra cost.",
-  "version": "0.6.0",
+  "description": "AI-powered code completions, transforms, commit messages, RSVP speed reading, and Claude Code session monitoring - all using your Claude Max subscription at no extra cost.",
+  "version": "0.7.0",
   "publisher": "CesarAndresLopez",
   "author": {
     "name": "Cesar Andres Lopez",
@@ -35,7 +35,11 @@
     "ai-assistant",
     "code-transform",
     "rsvp",
-    "speed-reading"
+    "speed-reading",
+    "session-monitor",
+    "token-usage",
+    "claude-code",
+    "analytics"
   ],
   "engines": {
     "vscode": "^1.85.0"
@@ -283,6 +287,11 @@
           "type": "number",
           "default": 1500,
           "description": "Delay in milliseconds after typing stops before showing completion hint"
+        },
+        "sidekick.enableSessionMonitoring": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable Claude Code session monitoring for token usage tracking"
         }
       }
     },
@@ -425,6 +434,25 @@
       {
         "command": "sidekick.speedRead.phd",
         "title": "Explain: PhD Mode"
+      },
+      {
+        "command": "sidekick.openDashboard",
+        "title": "Sidekick: Open Session Dashboard"
+      },
+      {
+        "command": "sidekick.startMonitoring",
+        "title": "Sidekick: Start Session Monitoring",
+        "icon": "$(play)"
+      },
+      {
+        "command": "sidekick.stopMonitoring",
+        "title": "Sidekick: Stop Session Monitoring",
+        "icon": "$(stop)"
+      },
+      {
+        "command": "sidekick.refreshSession",
+        "title": "Sidekick: Refresh/Find Session",
+        "icon": "$(refresh)"
       }
     ],
     "submenus": [
@@ -613,6 +641,37 @@
         {
           "command": "sidekick.speedRead.phd",
           "group": "2_explain@5"
+        }
+      ]
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "sidekick-monitor",
+          "title": "Session Monitor",
+          "icon": "images/icon.png"
+        }
+      ]
+    },
+    "views": {
+      "sidekick-monitor": [
+        {
+          "type": "webview",
+          "id": "sidekick.dashboard",
+          "name": "Session Analytics"
+        },
+        {
+          "type": "webview",
+          "id": "sidekick.mindMap",
+          "name": "Mind Map"
+        },
+        {
+          "id": "sidekick.tempFiles",
+          "name": "Latest Files Touched"
+        },
+        {
+          "id": "sidekick.subagents",
+          "name": "Subagents"
         }
       ]
     }

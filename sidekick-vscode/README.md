@@ -1,12 +1,12 @@
 # Sidekick for Max
 
-Your Claude Max, working harder: completions, transforms, commits, code review, and more.
+Your Claude Max, working harder: completions, transforms, commits, code review, session monitoring, and more.
 
 ![Sidekick demo](https://raw.githubusercontent.com/cesarandreslopez/sidekick-for-claude-max/main/assets/all_features.gif?v=2)
 
 **Claude Code is incredible for complex, multi-file refactoring and agentic workflows.** But sometimes you just want a quick inline completion while typing, or to transform a snippet of code without spinning up a full conversation. And you shouldn't have to pay for yet another subscription to get that.
 
-If you're already paying for Claude Max, Sidekick lets you use those tokens for inline completions, code transforms, AI commit messages, and speed reading with AI explanations--no extra cost, no separate account.
+If you're already paying for Claude Max, Sidekick lets you use those tokens for inline completions, code transforms, AI commit messages, speed reading with AI explanations, and real-time session monitoring--no extra cost, no separate account.
 
 ## Why Use This Extension?
 
@@ -19,10 +19,12 @@ Most Claude Max subscribers don't use their full 5-hour usage allocation. Sideki
 | Pay $100-200/mo for Claude Max | Same subscription |
 | Pay $10-19/mo extra for Copilot | No additional cost |
 | Tokens sitting unused between CLI sessions | Continuous inline assistance |
+| No visibility into Claude Code sessions | Real-time monitoring dashboard |
 
 **Designed to complement Claude Code CLI, not replace it:**
 - Use **Claude Code CLI** for complex, multi-file refactoring and agentic tasks
-- Use **Sidekick** for fast inline completions and quick code transforms
+- Use **Sidekick** for fast inline completions, quick code transforms, and monitoring your CLI sessions
+- **Session Monitor** shows token usage, costs, activity timeline, and exactly what Claude is doing—perfect for keeping an eye on long-running tasks
 
 The extension uses Haiku by default for inline completions - it's fast, responsive, and uses minimal quota so you still have capacity for your CLI workflows.
 
@@ -65,6 +67,34 @@ The extension uses Haiku by default for inline completions - it's fast, responsi
    - Select "api-key"
 
 ## Features
+
+### Claude Code Session Monitor
+
+Monitor your Claude Code sessions in real-time with a comprehensive analytics dashboard. Click the Session Monitor icon in the activity bar to access all monitoring features.
+
+![Session Monitor demo](../assets/session-monitor-demo.gif)
+
+**Session Analytics Dashboard:**
+- Real-time token usage and cost tracking with model-specific pricing
+- Context window gauge showing input/output token usage vs. limits
+- Activity timeline displaying user prompts, tool calls, errors, and subagent spawns
+- Session selector dropdown to switch between active and recent sessions
+- Tool analytics with categorization (file operations, search, bash commands, etc.)
+
+**Mind Map Visualization:**
+- Interactive D3.js force-directed graph showing session structure
+- Visualizes conversation flow, tool usage, and file relationships
+- Real-time updates as the session progresses
+
+**Tree Views:**
+- **Latest Files Touched** - Quick access to files modified during Claude Code sessions
+- **Subagents** - Monitor spawned Task agents during complex operations with status tracking
+
+**Status Bar Integration:**
+- Real-time session indicator in the VS Code status bar
+- Quick access to dashboard and monitoring controls
+
+The monitor automatically discovers Claude Code sessions and updates in real-time. Perfect for understanding token usage, tracking costs, and seeing exactly what Claude is doing in your codebase.
 
 ### Inline Completions
 
@@ -226,6 +256,10 @@ Speed read selected text with AI-powered explanations. [RSVP (Rapid Serial Visua
 | Sidekick: View Logs | - | Open output channel for debugging |
 | Sidekick: Set API Key | - | Set your Anthropic API key |
 | Sidekick: Test Connection | - | Test API connectivity |
+| Sidekick: Open Session Dashboard | - | Open the Claude Code session monitor dashboard |
+| Sidekick: Start Session Monitoring | - | Begin monitoring Claude Code sessions |
+| Sidekick: Stop Session Monitoring | - | Stop monitoring Claude Code sessions |
+| Sidekick: Refresh/Find Session | - | Discover new Claude Code sessions |
 
 ### Status Bar Menu
 
@@ -267,6 +301,7 @@ Click "Sidekick" in the status bar to access:
 | `sidekick.explanationModel` | `sonnet` | Model for RSVP explanations: `haiku`, `sonnet`, or `opus` |
 | `sidekick.showCompletionHint` | `true` | Show visual hint at cursor suggesting AI completion |
 | `sidekick.completionHintDelayMs` | `1500` | Delay before showing completion hint (ms) |
+| `sidekick.enableSessionMonitoring` | `true` | Enable Claude Code session monitoring |
 
 > **Note:** Prose files (Markdown, plaintext, HTML, XML, LaTeX, etc.) automatically use multiline mode regardless of the setting.
 

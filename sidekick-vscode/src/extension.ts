@@ -28,12 +28,18 @@ import { ErrorExplanationService } from "./services/ErrorExplanationService";
 import { InlineChatService } from "./services/InlineChatService";
 import { PreCommitReviewService } from "./services/PreCommitReviewService";
 import { PrDescriptionService } from "./services/PrDescriptionService";
+import { SessionMonitor } from './services/SessionMonitor';
+import { MonitorStatusBar } from './services/MonitorStatusBar';
 import { InlineCompletionProvider } from "./providers/InlineCompletionProvider";
 import { InlineChatProvider } from "./providers/InlineChatProvider";
 import { RsvpViewProvider } from "./providers/RsvpViewProvider";
 import { ExplainViewProvider } from "./providers/ExplainViewProvider";
 import { ErrorExplanationProvider } from "./providers/ErrorExplanationProvider";
 import { ErrorViewProvider } from "./providers/ErrorViewProvider";
+import { DashboardViewProvider } from "./providers/DashboardViewProvider";
+import { MindMapViewProvider } from "./providers/MindMapViewProvider";
+import { TempFilesTreeProvider } from "./providers/TempFilesTreeProvider";
+import { SubagentTreeProvider } from "./providers/SubagentTreeProvider";
 import { StatusBarManager } from "./services/StatusBarManager";
 import { initLogger, log, logError, showLog } from "./services/Logger";
 import {
@@ -77,6 +83,12 @@ let preCommitReviewService: PreCommitReviewService | undefined;
 
 /** PR description service for AI-powered PR generation */
 let prDescriptionService: PrDescriptionService | undefined;
+
+/** Session monitor for Claude Code sessions */
+let sessionMonitor: SessionMonitor | undefined;
+
+/** Dashboard view provider for session analytics */
+let dashboardProvider: DashboardViewProvider | undefined;
 
 /**
  * Activates the extension.
@@ -153,6 +165,72 @@ export async function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(prDescriptionService);
   }
 
+  // Initialize session monitor for Claude Code monitoring
+  const monitoringConfig = vscode.workspace.getConfiguration('sidekick');
+  const enableMonitoring = monitoringConfig.get<boolean>('enableSessionMonitoring') ?? true;
+
+  if (enableMonitoring) {
+    sessionMonitor = new SessionMonitor();
+    context.subscriptions.push(sessionMonitor);
+
+    // Start monitoring in background (don't block activation per EXT-04)
+    const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+    if (workspaceFolder) {
+      sessionMonitor.start(workspaceFolder.uri.fsPath).then(active => {
+        if (active) {
+          log(`Claude Code session monitoring started: ${sessionMonitor!.getSessionPath()}`);
+        } else {
+          log('No active Claude Code session detected');
+        }
+      }).catch(error => {
+        logError('Failed to start session monitor', error);
+      });
+    }
+
+    // Log token usage events for debugging
+    sessionMonitor.onTokenUsage(usage => {
+      log(`Token usage: ${usage.inputTokens} in, ${usage.outputTokens} out, model: ${usage.model}`);
+    });
+
+    // Register dashboard view provider (depends on sessionMonitor)
+    dashboardProvider = new DashboardViewProvider(context.extensionUri, sessionMonitor);
+    context.subscriptions.push(dashboardProvider);
+    context.subscriptions.push(
+      vscode.window.registerWebviewViewProvider(DashboardViewProvider.viewType, dashboardProvider)
+    );
+    log('Dashboard view provider registered');
+
+    // Register mind map view provider (depends on sessionMonitor)
+    const mindMapProvider = new MindMapViewProvider(context.extensionUri, sessionMonitor);
+    context.subscriptions.push(mindMapProvider);
+    context.subscriptions.push(
+      vscode.window.registerWebviewViewProvider(MindMapViewProvider.viewType, mindMapProvider)
+    );
+    log('Mind map view provider registered');
+
+    // Register temp files tree provider (depends on sessionMonitor)
+    const tempFilesProvider = new TempFilesTreeProvider(sessionMonitor);
+    context.subscriptions.push(tempFilesProvider);
+    context.subscriptions.push(
+      vscode.window.registerTreeDataProvider('sidekick.tempFiles', tempFilesProvider)
+    );
+    log('Temp files tree provider registered');
+
+    // Register subagent tree provider (depends on sessionMonitor)
+    const subagentProvider = new SubagentTreeProvider(sessionMonitor);
+    context.subscriptions.push(subagentProvider);
+    context.subscriptions.push(
+      vscode.window.registerTreeDataProvider('sidekick.subagents', subagentProvider)
+    );
+    log('Subagent tree provider registered');
+
+    // Create monitor status bar (depends on sessionMonitor)
+    const monitorStatusBar = new MonitorStatusBar(sessionMonitor);
+    context.subscriptions.push(monitorStatusBar);
+  } else {
+    log('Session monitoring disabled by configuration');
+  }
+
   // Register inline completion provider using CompletionService
   const inlineProvider = new InlineCompletionProvider(completionService);
   const inlineDisposable = vscode.languages.registerInlineCompletionItemProvider(
@@ -215,6 +293,85 @@ export async function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     vscode.commands.registerCommand("sidekick.showLogs", () => {
       showLog();
+    })
+  );
+
+  // Register open dashboard command
+  context.subscriptions.push(
+    vscode.commands.registerCommand('sidekick.openDashboard', () => {
+      // Focus the dashboard view in the sidebar
+      vscode.commands.executeCommand('sidekick.dashboard.focus');
+    })
+  );
+
+  // Register start monitoring command
+  context.subscriptions.push(
+    vscode.commands.registerCommand('sidekick.startMonitoring', async () => {
+      if (!sessionMonitor) {
+        vscode.window.showErrorMessage('Session monitor not initialized');
+        return;
+      }
+
+      if (sessionMonitor.isActive()) {
+        vscode.window.showInformationMessage('Session monitoring is already active');
+        return;
+      }
+
+      const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+      if (!workspaceFolder) {
+        vscode.window.showWarningMessage('No workspace folder open');
+        return;
+      }
+
+      const active = await sessionMonitor.start(workspaceFolder.uri.fsPath);
+      if (active) {
+        vscode.window.showInformationMessage('Session monitoring started');
+        log(`Session monitoring started: ${sessionMonitor.getSessionPath()}`);
+      } else {
+        vscode.window.showInformationMessage('No active session found. Waiting for Claude Code to start...');
+        log('Session monitor in discovery mode, waiting for session');
+      }
+    })
+  );
+
+  // Register stop monitoring command
+  context.subscriptions.push(
+    vscode.commands.registerCommand('sidekick.stopMonitoring', () => {
+      if (!sessionMonitor) {
+        vscode.window.showErrorMessage('Session monitor not initialized');
+        return;
+      }
+
+      if (!sessionMonitor.isActive() && !sessionMonitor.isInDiscoveryMode()) {
+        vscode.window.showInformationMessage('Session monitoring is not active');
+        return;
+      }
+
+      sessionMonitor.dispose();
+
+      // Reinitialize for potential future use
+      sessionMonitor = new SessionMonitor();
+
+      vscode.window.showInformationMessage('Session monitoring stopped');
+      log('Session monitoring stopped by user');
+    })
+  );
+
+  // Register refresh session command
+  context.subscriptions.push(
+    vscode.commands.registerCommand('sidekick.refreshSession', async () => {
+      if (!sessionMonitor) {
+        vscode.window.showErrorMessage('Session monitor not initialized');
+        return;
+      }
+
+      const found = await sessionMonitor.refreshSession();
+      if (found) {
+        vscode.window.showInformationMessage('Session found and attached');
+        log(`Session refreshed: ${sessionMonitor.getSessionPath()}`);
+      } else {
+        vscode.window.showInformationMessage('No active session found. Still searching...');
+      }
     })
   );
 

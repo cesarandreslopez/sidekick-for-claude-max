@@ -5,6 +5,44 @@ All notable changes to the Sidekick for Max VS Code extension will be documented
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] - 2026-01-29
+
+### Added
+- **Claude Code Session Monitor**: A comprehensive real-time analytics dashboard for monitoring Claude Code sessions
+  - **Session Analytics Dashboard**: Track token usage, costs, and session activity in a dedicated sidebar panel
+    - Real-time token consumption and cost tracking with model-specific pricing
+    - Context window gauge showing input/output token usage vs. limits
+    - Session selector dropdown to switch between active and recent sessions
+    - Activity timeline displaying user prompts, tool calls, errors, and subagent spawns
+    - Tool analytics with categorization (file operations, search, bash commands, etc.)
+    - Automatic session discovery when Claude Code starts new sessions
+  - **Mind Map Visualization**: Interactive D3.js force-directed graph showing session structure
+    - Visualizes conversation flow, tool usage, and file relationships
+    - Interactive nodes for exploring how Claude navigates your codebase
+    - Real-time updates as the session progresses
+  - **Latest Files Touched**: Tree view showing files modified during Claude Code sessions
+    - Quick access to recently edited files
+    - Shows file status (created, modified, deleted)
+  - **Subagents Tree**: Monitor spawned Task agents during complex operations
+    - Track subagent status (running, completed, failed)
+    - View subagent prompts and results
+  - **Status Bar Metrics**: Real-time session status in the VS Code status bar
+    - Shows active session indicator and quick access to dashboard
+  - **New Commands**:
+    - `Sidekick: Open Session Dashboard` - Open the analytics dashboard
+    - `Sidekick: Start Session Monitoring` - Begin monitoring Claude Code sessions
+    - `Sidekick: Stop Session Monitoring` - Pause monitoring
+    - `Sidekick: Refresh/Find Session` - Discover new sessions
+  - **Activity Bar Integration**: New "Session Monitor" icon in the activity bar with all monitoring views
+- **New Setting**:
+  - `sidekick.enableSessionMonitoring`: Enable/disable Claude Code session monitoring (default: true)
+
+### Technical
+- Added JSONL parser with line buffering for efficient session log parsing
+- Added session path resolver for cross-platform Claude Code directory detection
+- Added model pricing service with accurate per-token cost calculation
+- Added burn rate calculator for token consumption tracking
+
 ## [0.6.0] - 2026-01-26
 
 ### Added
