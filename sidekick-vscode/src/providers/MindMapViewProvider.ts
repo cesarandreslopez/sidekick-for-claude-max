@@ -163,6 +163,7 @@ export class MindMapViewProvider implements vscode.WebviewViewProvider, vscode.D
    * Handles node click events from webview.
    *
    * If clicked node is a file, opens the file in the editor.
+   * If clicked node is a URL, opens the URL in the default browser.
    *
    * @param nodeId - ID of the clicked node
    */
@@ -175,6 +176,19 @@ export class MindMapViewProvider implements vscode.WebviewViewProvider, vscode.D
         doc => vscode.window.showTextDocument(doc),
         () => log(`Could not open file: ${filePath}`)
       );
+    }
+    // If it's a URL node, open in browser
+    else if (nodeId.startsWith('url-')) {
+      const urlOrQuery = nodeId.replace('url-', '');
+      try {
+        // Check if it's a valid URL
+        const url = new URL(urlOrQuery);
+        vscode.env.openExternal(vscode.Uri.parse(url.href));
+      } catch {
+        // It's a search query, open as a web search
+        const searchUrl = `https://www.google.com/search?q=${encodeURIComponent(urlOrQuery)}`;
+        vscode.env.openExternal(vscode.Uri.parse(searchUrl));
+      }
     }
   }
 
@@ -341,6 +355,15 @@ export class MindMapViewProvider implements vscode.WebviewViewProvider, vscode.D
       cursor: grabbing;
     }
 
+    /* Clickable nodes (files and URLs) */
+    .node.clickable {
+      cursor: pointer;
+    }
+
+    .node.clickable:hover {
+      filter: brightness(1.3);
+    }
+
     .node-label {
       font-size: 9px;
       fill: var(--vscode-foreground);
@@ -454,7 +477,8 @@ export class MindMapViewProvider implements vscode.WebviewViewProvider, vscode.D
         file: '#4A90E2',
         tool: '#7ED321',
         todo: '#F5A623',
-        subagent: '#BD10E0'
+        subagent: '#BD10E0',
+        url: '#50E3C2'
       };
 
       // Node sizes by type
@@ -463,7 +487,8 @@ export class MindMapViewProvider implements vscode.WebviewViewProvider, vscode.D
         file: 10,
         tool: 8,
         todo: 6,
-        subagent: 8
+        subagent: 8,
+        url: 8
       };
 
       // DOM elements
@@ -621,7 +646,10 @@ export class MindMapViewProvider implements vscode.WebviewViewProvider, vscode.D
 
         node.enter()
           .append('circle')
-          .attr('class', 'node')
+          .attr('class', function(d) {
+            const isClickable = d.type === 'file' || d.type === 'url';
+            return isClickable ? 'node clickable' : 'node';
+          })
           .attr('r', function(d) { return NODE_SIZES[d.type]; })
           .attr('fill', function(d) { return NODE_COLORS[d.type]; })
           .call(drag(simulation))

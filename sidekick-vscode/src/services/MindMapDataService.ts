@@ -24,6 +24,9 @@ export class MindMapDataService {
   /** File path tools that operate on files */
   private static readonly FILE_TOOLS = ['Read', 'Write', 'Edit', 'MultiEdit'];
 
+  /** URL-based tools */
+  private static readonly URL_TOOLS = ['WebFetch', 'WebSearch'];
+
   /**
    * Builds complete graph from session statistics.
    *
@@ -66,6 +69,22 @@ export class MindMapDataService {
         });
         nodeIds.add(id);
         // Note: files are linked to tools via addFileToolLinks, not to session directly
+      }
+    });
+
+    // Add URL nodes (linked to WebFetch/WebSearch tools)
+    const urls = this.extractUrls(stats.toolCalls);
+    urls.forEach((count, url) => {
+      const id = `url-${url}`;
+      if (!nodeIds.has(id)) {
+        nodes.push({
+          id,
+          label: this.getUrlLabel(url),
+          fullPath: url,
+          type: 'url',
+          count,
+        });
+        nodeIds.add(id);
       }
     });
 
@@ -117,6 +136,9 @@ export class MindMapDataService {
     // Create file-to-tool links
     this.addFileToolLinks(stats.toolCalls, nodeIds, links);
 
+    // Create URL-to-tool links
+    this.addUrlToolLinks(stats.toolCalls, nodeIds, links);
+
     return { nodes, links };
   }
 
@@ -140,6 +162,29 @@ export class MindMapDataService {
     }
 
     return files;
+  }
+
+  /**
+   * Extracts URLs from WebFetch/WebSearch tool calls with access counts.
+   *
+   * @param toolCalls - Array of tool calls from session
+   * @returns Map of URLs to access counts
+   */
+  private static extractUrls(toolCalls: ToolCall[]): Map<string, number> {
+    const urls = new Map<string, number>();
+
+    for (const call of toolCalls) {
+      if (this.URL_TOOLS.includes(call.name)) {
+        // WebFetch uses 'url', WebSearch uses 'query'
+        const url = (call.input.url as string) || (call.input.query as string);
+        if (url && typeof url === 'string') {
+          const count = urls.get(url) || 0;
+          urls.set(url, count + 1);
+        }
+      }
+    }
+
+    return urls;
   }
 
   /**
@@ -226,6 +271,39 @@ export class MindMapDataService {
   }
 
   /**
+   * Creates links between URLs/queries and the tools that accessed them.
+   *
+   * @param toolCalls - Array of tool calls from session
+   * @param existingNodeIds - Set of existing node IDs
+   * @param links - Links array to add to
+   */
+  private static addUrlToolLinks(
+    toolCalls: ToolCall[],
+    existingNodeIds: Set<string>,
+    links: GraphLink[]
+  ): void {
+    const addedLinks = new Set<string>();
+
+    for (const call of toolCalls) {
+      if (this.URL_TOOLS.includes(call.name)) {
+        const url = (call.input.url as string) || (call.input.query as string);
+        if (url && typeof url === 'string') {
+          const urlId = `url-${url}`;
+          const toolId = `tool-${call.name}`;
+
+          if (existingNodeIds.has(urlId) && existingNodeIds.has(toolId)) {
+            const linkKey = `${toolId}-${urlId}`;
+            if (!addedLinks.has(linkKey)) {
+              links.push({ source: toolId, target: urlId });
+              addedLinks.add(linkKey);
+            }
+          }
+        }
+      }
+    }
+  }
+
+  /**
    * Extracts filename from full path.
    *
    * @param filePath - Full file path
@@ -234,6 +312,24 @@ export class MindMapDataService {
   private static getFileName(filePath: string): string {
     const parts = filePath.split('/');
     return parts[parts.length - 1] || filePath;
+  }
+
+  /**
+   * Extracts display label from URL or search query.
+   *
+   * For URLs, extracts the hostname. For search queries, truncates if needed.
+   *
+   * @param urlOrQuery - URL or search query string
+   * @returns Shortened label for display
+   */
+  private static getUrlLabel(urlOrQuery: string): string {
+    try {
+      const url = new URL(urlOrQuery);
+      return url.hostname;
+    } catch {
+      // Not a valid URL (probably a search query), truncate it
+      return this.truncateLabel(urlOrQuery, 25);
+    }
   }
 
   /**

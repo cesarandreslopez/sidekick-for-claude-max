@@ -16,8 +16,9 @@
  * - todo: TODOs extracted from timeline descriptions
  * - subagent: Subagent/sidechain events
  * - session: Central session node (hub)
+ * - url: URLs accessed by WebFetch or search queries from WebSearch
  */
-export type NodeType = 'file' | 'tool' | 'todo' | 'subagent' | 'session';
+export type NodeType = 'file' | 'tool' | 'todo' | 'subagent' | 'session' | 'url';
 
 /**
  * Graph node for D3.js force simulation.
