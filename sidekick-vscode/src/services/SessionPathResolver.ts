@@ -17,28 +17,29 @@ import * as os from 'os';
 /**
  * Encodes a workspace path to Claude Code's directory naming scheme.
  *
- * Claude Code replaces path separators with hyphens and removes the
- * leading separator to create a flat directory structure.
+ * Claude Code replaces path separators, colons, and underscores with hyphens
+ * to create a flat directory structure.
  *
  * @param workspacePath - Absolute path to workspace directory
- * @returns Encoded path string (e.g., "home-user-code-project")
+ * @returns Encoded path string (e.g., "-home-user-code-project")
  *
  * @example
  * ```typescript
- * encodeWorkspacePath('/home/user/code/project');
- * // => "-home-user-code-project"
+ * encodeWorkspacePath('/home/user/code/my_project');
+ * // => "-home-user-code-my-project"
  *
- * encodeWorkspacePath('C:\\Users\\user\\code\\project'); // Windows
- * // => "C:-Users-user-code-project"
+ * encodeWorkspacePath('C:\\Users\\user\\code\\my_project'); // Windows
+ * // => "C--Users-user-code-my-project"
  * ```
  */
 export function encodeWorkspacePath(workspacePath: string): string {
   // Normalize path separators to forward slash
   const normalized = workspacePath.replace(/\\/g, '/');
 
-  // Replace all slashes with hyphens (including leading slash)
-  // Claude Code keeps the leading hyphen: /home/user/code -> -home-user-code
-  return normalized.replace(/\//g, '-');
+  // Replace colons, slashes, and underscores with hyphens
+  // Windows: C:\Users\foo_bar -> C:/Users/foo_bar -> C--Users-foo-bar
+  // Unix: /home/user/foo_bar -> -home-user-foo-bar
+  return normalized.replace(/[:\/_]/g, '-');
 }
 
 /**
@@ -65,6 +66,108 @@ export function getSessionDirectory(workspacePath: string): string {
 const ACTIVE_SESSION_THRESHOLD_MS = 5 * 60 * 1000;
 
 /**
+ * Discovers the session directory for a workspace by trying multiple strategies.
+ *
+ * Strategy order:
+ * 1. Try the computed encoded path (fast, works if our encoding matches Claude Code's)
+ * 2. Scan ~/.claude/projects/ for directories matching the workspace name
+ * 3. Scan temp directory for Claude scratchpad directories to find actual encoding
+ *
+ * @param workspacePath - Absolute path to workspace directory
+ * @returns Absolute path to session directory, or null if not found
+ */
+export function discoverSessionDirectory(workspacePath: string): string | null {
+  const projectsDir = path.join(os.homedir(), '.claude', 'projects');
+
+  // Strategy 1: Try computed encoded path
+  const computedDir = getSessionDirectory(workspacePath);
+  if (fs.existsSync(computedDir)) {
+    return computedDir;
+  }
+
+  // Strategy 2: Scan ~/.claude/projects/ for matching directories
+  try {
+    if (fs.existsSync(projectsDir)) {
+      const existingDirs = fs.readdirSync(projectsDir).filter(name => {
+        const fullPath = path.join(projectsDir, name);
+        try {
+          return fs.statSync(fullPath).isDirectory();
+        } catch {
+          return false;
+        }
+      });
+
+      // Try to match by workspace path components
+      // Normalize workspace path for comparison
+      const normalizedWorkspace = workspacePath
+        .replace(/\\/g, '/')
+        .replace(/:/g, '-')
+        .replace(/_/g, '-')
+        .replace(/\//g, '-')
+        .toLowerCase();
+
+      for (const dir of existingDirs) {
+        // Check if the directory name matches (case-insensitive)
+        if (dir.toLowerCase() === normalizedWorkspace) {
+          return path.join(projectsDir, dir);
+        }
+      }
+
+      // Fallback: match by final path component (project name)
+      const workspaceBasename = path.basename(workspacePath)
+        .replace(/_/g, '-')
+        .toLowerCase();
+
+      for (const dir of existingDirs) {
+        const dirLower = dir.toLowerCase();
+        // Check if dir ends with the project name
+        if (dirLower.endsWith('-' + workspaceBasename) || dirLower === workspaceBasename) {
+          return path.join(projectsDir, dir);
+        }
+      }
+    }
+  } catch {
+    // Ignore errors during discovery
+  }
+
+  // Strategy 3: Check temp directory for Claude scratchpad directories
+  // Claude creates: <tmpdir>/claude/<encoded-workspace>/<session-uuid>/scratchpad
+  try {
+    const claudeTempDir = path.join(os.tmpdir(), 'claude');
+    if (fs.existsSync(claudeTempDir)) {
+      const tempDirs = fs.readdirSync(claudeTempDir).filter(name => {
+        const fullPath = path.join(claudeTempDir, name);
+        try {
+          return fs.statSync(fullPath).isDirectory();
+        } catch {
+          return false;
+        }
+      });
+
+      // Match by workspace basename
+      const workspaceBasename = path.basename(workspacePath)
+        .replace(/_/g, '-')
+        .toLowerCase();
+
+      for (const encodedDir of tempDirs) {
+        const encodedLower = encodedDir.toLowerCase();
+        if (encodedLower.endsWith('-' + workspaceBasename) || encodedLower === workspaceBasename) {
+          // Found a match in temp - use this encoding for the session directory
+          const sessionDir = path.join(projectsDir, encodedDir);
+          if (fs.existsSync(sessionDir)) {
+            return sessionDir;
+          }
+        }
+      }
+    }
+  } catch {
+    // Ignore errors during temp directory scan
+  }
+
+  return null;
+}
+
+/**
  * Finds the most recently modified session file for a workspace.
  *
  * Prioritizes "active" sessions (modified within last 5 minutes) over
@@ -84,11 +187,12 @@ const ACTIVE_SESSION_THRESHOLD_MS = 5 * 60 * 1000;
  * ```
  */
 export function findActiveSession(workspacePath: string): string | null {
-  const sessionDir = getSessionDirectory(workspacePath);
+  // Use discovery to find the session directory (handles encoding differences)
+  const sessionDir = discoverSessionDirectory(workspacePath);
 
   try {
-    // Check if directory exists
-    if (!fs.existsSync(sessionDir)) {
+    // Check if directory was found
+    if (!sessionDir) {
       return null;
     }
 
@@ -152,11 +256,12 @@ export function findActiveSession(workspacePath: string): string | null {
  * ```
  */
 export function findAllSessions(workspacePath: string): string[] {
-  const sessionDir = getSessionDirectory(workspacePath);
+  // Use discovery to find the session directory (handles encoding differences)
+  const sessionDir = discoverSessionDirectory(workspacePath);
 
   try {
-    // Check if directory exists
-    if (!fs.existsSync(sessionDir)) {
+    // Check if directory was found
+    if (!sessionDir) {
       return [];
     }
 
@@ -198,6 +303,8 @@ export interface SessionDiagnostics {
   expectedSessionDir: string;
   /** Whether the expected directory exists */
   expectedDirExists: boolean;
+  /** Directory found by discovery (may differ from expected if encoding differs) */
+  discoveredSessionDir: string | null;
   /** All directories in ~/.claude/projects/ (for debugging path mismatches) */
   existingProjectDirs: string[];
   /** Directories that look similar to expected (fuzzy matches) */
@@ -237,6 +344,9 @@ export function getSessionDiagnostics(workspacePath: string): SessionDiagnostics
     // Ignore errors - just return empty arrays
   }
 
+  // Try discovery to find actual session directory
+  const discoveredSessionDir = discoverSessionDirectory(workspacePath);
+
   // Find similar directories (fuzzy match for debugging)
   const workspaceBasename = path.basename(workspacePath).toLowerCase();
   const similarDirs = existingProjectDirs.filter(dir => {
@@ -250,6 +360,7 @@ export function getSessionDiagnostics(workspacePath: string): SessionDiagnostics
     encodedPath,
     expectedSessionDir,
     expectedDirExists,
+    discoveredSessionDir,
     existingProjectDirs,
     similarDirs,
     platform: process.platform

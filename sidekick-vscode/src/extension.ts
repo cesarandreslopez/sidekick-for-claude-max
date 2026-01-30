@@ -396,6 +396,7 @@ export async function activate(context: vscode.ExtensionContext) {
       log(`Encoded path: ${diag.encodedPath}`);
       log(`Expected session dir: ${diag.expectedSessionDir}`);
       log(`Expected dir exists: ${diag.expectedDirExists}`);
+      log(`Discovered session dir: ${diag.discoveredSessionDir || '(not found)'}`);
       log(`Existing project dirs (${diag.existingProjectDirs.length}):`);
       diag.existingProjectDirs.forEach(dir => log(`  - ${dir}`));
       if (diag.similarDirs.length > 0) {
@@ -408,10 +409,11 @@ export async function activate(context: vscode.ExtensionContext) {
       showLog();
 
       // Show summary to user
-      if (diag.expectedDirExists) {
-        vscode.window.showInformationMessage(
-          `Session directory found: ${diag.expectedSessionDir}`
-        );
+      if (diag.discoveredSessionDir) {
+        const message = diag.discoveredSessionDir === diag.expectedSessionDir
+          ? `Session directory found: ${diag.discoveredSessionDir}`
+          : `Session directory discovered (encoding differs): ${diag.discoveredSessionDir}`;
+        vscode.window.showInformationMessage(message);
       } else if (diag.similarDirs.length > 0) {
         vscode.window.showWarningMessage(
           `Expected dir not found. Similar dirs exist: ${diag.similarDirs.join(', ')}. Check Sidekick logs for details.`
