@@ -6,6 +6,62 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [0.7.4] - 2026-01-30
+
+### Added
+- **Mind Map URL Nodes**: WebFetch and WebSearch calls now appear as clickable nodes
+  - URLs display as cyan nodes showing hostname, click to open in browser
+  - Search queries display truncated text, click to search Google
+  - File nodes clickable to open in VS Code editor
+
+## [0.7.3] - 2026-01-29
+
+### Added
+- **Timeout Manager**: Centralized, context-aware timeout handling across all AI operations
+  - Configurable timeouts per operation type via settings
+  - Auto-adjustment based on context/prompt size
+  - Progress indication with cancellation support
+  - "Retry with longer timeout" option on timeout
+
+## [0.7.2] - 2026-01-29
+
+### Fixed
+- **Session path encoding**: Fixed session monitoring on Windows/Mac with 3-strategy discovery fallback
+
+## [0.7.1] - 2026-01-29
+
+### Fixed
+- **Silent timeout on inline completions**: Now shows warning notification with options to open settings or view logs
+
+### Added
+- New setting `sidekick.inlineTimeout` for configurable timeout (default: 15s)
+
+## [0.7.0] - 2026-01-29
+
+### Added
+- **Claude Code Session Monitor**: Real-time analytics dashboard for monitoring Claude Code sessions
+  - Session analytics dashboard with token usage, costs, and activity timeline
+  - Mind map visualization showing conversation flow and file relationships
+  - Latest files touched tree view
+  - Subagents tree view for monitoring spawned Task agents
+  - Status bar metrics and activity bar integration
+- New commands: Open Session Dashboard, Start/Stop Monitoring, Refresh/Find Session
+
+## [0.6.0] - 2026-01-26
+
+### Added
+- **Generate Documentation**: Auto-generate JSDoc/docstrings (`Ctrl+Shift+D`)
+- **Explain Code**: AI-powered explanations with 5 complexity levels (`Ctrl+Shift+E`)
+- **Error Explanations**: Lightbulb quick actions for error diagnosis and fixes
+- **Quick Ask (Inline Chat)**: Ask questions without leaving editor (`Ctrl+I`)
+- **Pre-commit AI Review**: Review changes before committing (eye icon in Source Control)
+- **PR Description Generation**: Auto-generate PR descriptions (PR icon in Source Control)
+- Context menu submenu organizing all Sidekick commands
+- Completion hint visual indicator
+
+### Fixed
+- Claude CLI path resolution for non-standard installations
+
 ## [0.5.0] - 2025-01-24
 
 ### Added

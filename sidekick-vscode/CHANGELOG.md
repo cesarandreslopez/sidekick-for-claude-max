@@ -5,6 +5,48 @@ All notable changes to the Sidekick for Max VS Code extension will be documented
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.4] - 2026-01-30
+
+### Added
+- **Mind Map URL Nodes**: WebFetch and WebSearch calls now appear as clickable nodes in the session mind map
+  - URLs display as cyan nodes showing the hostname (e.g., `example.com`)
+  - Search queries display truncated query text
+  - Click URL nodes to open in your default browser
+  - Click search query nodes to search Google
+  - File nodes remain clickable to open in VS Code editor
+  - Visual feedback with pointer cursor and hover brightness effect
+
+## [0.7.3] - 2026-01-29
+
+### Added
+- **Timeout Manager**: Centralized, context-aware timeout handling across all AI operations
+  - Configurable timeouts per operation type (inline completion, transform, commit message, etc.)
+  - Auto-adjustment based on context/prompt size
+  - Progress indication with cancellation support
+  - "Retry with longer timeout" option when requests timeout
+- **New Settings**:
+  - `sidekick.timeouts.inlineCompletion`: Timeout for inline completions (default: 15s)
+  - `sidekick.timeouts.transform`: Timeout for code transforms (default: 60s)
+  - `sidekick.timeouts.commitMessage`: Timeout for commit message generation (default: 30s)
+  - `sidekick.timeouts.documentation`: Timeout for documentation generation (default: 30s)
+  - `sidekick.timeouts.explanation`: Timeout for code explanations (default: 45s)
+  - `sidekick.timeouts.errorExplanation`: Timeout for error explanations (default: 30s)
+  - `sidekick.timeouts.inlineChat`: Timeout for inline chat (default: 60s)
+  - `sidekick.timeouts.preCommitReview`: Timeout for pre-commit review (default: 60s)
+  - `sidekick.timeouts.prDescription`: Timeout for PR description generation (default: 45s)
+
+### Changed
+- All AI services now use TimeoutManager for consistent timeout behavior
+- Added AbortSignal support to completion options for proper request cancellation
+
+## [0.7.2] - 2026-01-29
+
+### Fixed
+- **Session path encoding on Windows/Mac**: Fixed issue where session monitoring couldn't find Claude Code sessions on some systems ([#6](https://github.com/cesarandreslopez/sidekick-for-claude-max/issues/6))
+  - Improved path encoding to handle colons, slashes, and underscores correctly
+  - Added 3-strategy discovery fallback when computed path doesn't match
+  - Added session directory to diagnostics command for debugging
+
 ## [0.7.1] - 2026-01-29
 
 ### Fixed
