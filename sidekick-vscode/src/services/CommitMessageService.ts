@@ -33,6 +33,8 @@ export interface CommitMessageResult {
   error?: string;
   /** Whether the diff was from staged or unstaged changes */
   diffType?: 'staged' | 'unstaged';
+  /** Path to the repository where changes were found */
+  repoPath?: string;
 }
 
 /**
@@ -197,6 +199,7 @@ export class CommitMessageService implements vscode.Disposable {
       return {
         message: cleaned,
         diffType: changes.type,
+        repoPath: changes.repoPath,
       };
     } catch (error) {
       logError('CommitMessageService: Generation failed', error);

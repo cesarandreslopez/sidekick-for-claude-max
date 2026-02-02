@@ -9,6 +9,7 @@
  */
 
 import * as vscode from 'vscode';
+import * as path from 'path';
 import { spawn } from 'child_process';
 import { API, GitExtension, Repository } from '../api/git';
 import { log, logError } from './Logger';
@@ -21,6 +22,8 @@ export interface ChangesForCommit {
   diff: string;
   /** Whether the diff is from staged or unstaged changes */
   type: 'staged' | 'unstaged';
+  /** The repository path where changes were found */
+  repoPath: string;
 }
 
 /**
@@ -94,14 +97,23 @@ export class GitService implements vscode.Disposable {
   /**
    * Gets the active repository for the current workspace.
    *
-   * Attempts to match the active editor's file to a repository. If no editor
-   * is active or no match is found, returns the first repository.
+   * Uses smart detection to find the most appropriate repository:
+   * 1. Match active editor's file to a repository
+   * 2. Last resort: first repository
+   *
+   * Note: For commit operations, use selectRepository() instead which
+   * verifies actual diffs exist.
    *
    * @returns The active repository, or undefined if no repositories exist
    */
   getActiveRepository(): Repository | undefined {
     if (!this.api || this.api.repositories.length === 0) {
       return undefined;
+    }
+
+    // Single repo - no ambiguity
+    if (this.api.repositories.length === 1) {
+      return this.api.repositories[0];
     }
 
     // Try to match active editor's file to a repository
@@ -112,12 +124,117 @@ export class GitService implements vscode.Disposable {
         documentPath.startsWith(repo.rootUri.fsPath)
       );
       if (matchingRepo) {
+        log(`getActiveRepository: Matched editor to repo: ${matchingRepo.rootUri.fsPath}`);
         return matchingRepo;
       }
     }
 
-    // Fallback to first repository
+    // Last resort: first repository
+    log(`getActiveRepository: No editor match, using first repo: ${this.api.repositories[0].rootUri.fsPath}`);
     return this.api.repositories[0];
+  }
+
+  /**
+   * Checks if a repository has an actual non-empty diff (staged or unstaged).
+   * This is more reliable than checking VS Code's state which can include
+   * untracked files or submodule changes that don't produce diffs.
+   *
+   * @param repository - The repository to check
+   * @returns Promise resolving to true if repo has actual diff content
+   */
+  private async hasActualDiff(repository: Repository): Promise<boolean> {
+    try {
+      // Check staged diff first
+      const stagedDiff = await this.getDiff(repository, true);
+      if (stagedDiff.trim().length > 0) {
+        return true;
+      }
+      // Check unstaged diff
+      const unstagedDiff = await this.getDiff(repository, false);
+      return unstagedDiff.trim().length > 0;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Selects a repository for commit-related operations with user interaction.
+   *
+   * Verifies repos have actual diffs (not just VS Code state which can include
+   * untracked files). Uses smart detection and prompts user when ambiguous:
+   * 1. Single repo: return it directly
+   * 2. Check all repos for actual diffs
+   * 3. If active editor matches a repo with diffs: use it
+   * 4. Exactly one repo with diffs: use it
+   * 5. Multiple repos with diffs: prompt user to select
+   * 6. No repos with diffs: return undefined
+   *
+   * @returns Promise resolving to selected repository, or undefined if none available/selected
+   */
+  async selectRepository(): Promise<Repository | undefined> {
+    if (!this.api || this.api.repositories.length === 0) {
+      return undefined;
+    }
+
+    // Single repo - no ambiguity
+    if (this.api.repositories.length === 1) {
+      return this.api.repositories[0];
+    }
+
+    // Check which repos actually have diffs (not just VS Code state)
+    log(`selectRepository: Checking ${this.api.repositories.length} repos for actual diffs`);
+    const reposWithDiffs: Repository[] = [];
+    for (const repo of this.api.repositories) {
+      if (await this.hasActualDiff(repo)) {
+        log(`selectRepository: Repo has actual diff: ${repo.rootUri.fsPath}`);
+        reposWithDiffs.push(repo);
+      }
+    }
+
+    // No repos with actual diffs
+    if (reposWithDiffs.length === 0) {
+      log('selectRepository: No repositories with actual diffs found');
+      return undefined;
+    }
+
+    // If active editor matches a repo with diffs, prefer it
+    const editor = vscode.window.activeTextEditor;
+    if (editor) {
+      const documentPath = editor.document.uri.fsPath;
+      const matchingRepo = reposWithDiffs.find(repo =>
+        documentPath.startsWith(repo.rootUri.fsPath)
+      );
+      if (matchingRepo) {
+        log(`selectRepository: Active editor matches repo with diff: ${matchingRepo.rootUri.fsPath}`);
+        return matchingRepo;
+      }
+    }
+
+    // Exactly one repo with diffs - use it
+    if (reposWithDiffs.length === 1) {
+      log(`selectRepository: Single repo with diff: ${reposWithDiffs[0].rootUri.fsPath}`);
+      return reposWithDiffs[0];
+    }
+
+    // Multiple repos with diffs - ask user
+    log(`selectRepository: ${reposWithDiffs.length} repos with diffs, prompting user`);
+    const items = reposWithDiffs.map(repo => ({
+      label: path.basename(repo.rootUri.fsPath),
+      description: repo.rootUri.fsPath,
+      repo
+    }));
+
+    const selected = await vscode.window.showQuickPick(items, {
+      placeHolder: 'Multiple repositories have changes. Select one:',
+    });
+
+    if (selected) {
+      log(`selectRepository: User selected: ${selected.repo.rootUri.fsPath}`);
+    } else {
+      log('selectRepository: User cancelled selection');
+    }
+
+    return selected?.repo;
   }
 
   /**
@@ -195,7 +312,7 @@ export class GitService implements vscode.Disposable {
    * Gets changes for commit message generation.
    *
    * This is the main method for retrieving diff text. It:
-   * 1. Gets the active repository
+   * 1. Selects the appropriate repository (with user prompt if ambiguous)
    * 2. Checks for staged changes (preferred)
    * 3. Falls back to unstaged changes if nothing staged
    * 4. Returns null if no changes exist
@@ -204,13 +321,15 @@ export class GitService implements vscode.Disposable {
    */
   async getChangesForCommit(): Promise<ChangesForCommit | null> {
     try {
-      const repository = this.getActiveRepository();
+      const repository = await this.selectRepository();
       if (!repository) {
-        log('No active repository found');
+        log('No active repository found or no repositories with changes');
         return null;
       }
 
       const changes = this.hasChanges(repository);
+
+      const repoPath = repository.rootUri.fsPath;
 
       // Prefer staged changes
       if (changes.staged) {
@@ -219,7 +338,7 @@ export class GitService implements vscode.Disposable {
           log('Staged changes exist but diff is empty');
           return null;
         }
-        return { diff, type: 'staged' };
+        return { diff, type: 'staged', repoPath };
       }
 
       // Fall back to unstaged changes
@@ -229,7 +348,7 @@ export class GitService implements vscode.Disposable {
           log('Unstaged changes exist but diff is empty');
           return null;
         }
-        return { diff, type: 'unstaged' };
+        return { diff, type: 'unstaged', repoPath };
       }
 
       log('No changes found in repository');
@@ -249,14 +368,31 @@ export class GitService implements vscode.Disposable {
    *
    * @param message - The commit message to set
    * @param confirmOverwrite - If true and input box has content, ask user to confirm (default: true)
+   * @param repoPath - Optional path to specific repository (use to ensure message goes to correct repo)
    * @returns Promise resolving to true if message was set, false if cancelled or no repo
    */
-  async setCommitMessage(message: string, confirmOverwrite: boolean = true): Promise<boolean> {
-    const repository = this.getActiveRepository();
+  async setCommitMessage(message: string, confirmOverwrite: boolean = true, repoPath?: string): Promise<boolean> {
+    let repository: Repository | undefined;
+
+    // If repoPath provided, find that specific repository
+    if (repoPath && this.api) {
+      repository = this.api.repositories.find(repo => repo.rootUri.fsPath === repoPath);
+      if (!repository) {
+        log(`setCommitMessage: Repository not found for path: ${repoPath}`);
+      }
+    }
+
+    // Fall back to active repository detection
     if (!repository) {
-      log('setCommitMessage: No active repository');
+      repository = this.getActiveRepository();
+    }
+
+    if (!repository) {
+      log('setCommitMessage: No repository found');
       return false;
     }
+
+    log(`setCommitMessage: Using repository: ${repository.rootUri.fsPath}`);
 
     // Check if user has existing content
     const currentValue = repository.inputBox.value;

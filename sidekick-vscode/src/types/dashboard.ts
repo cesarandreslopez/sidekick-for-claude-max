@@ -43,6 +43,10 @@ export interface QuotaState {
   available: boolean;
   /** Error message if quota fetch failed */
   error?: string;
+  /** Projected 5-hour utilization at reset time (percentage) */
+  projectedFiveHour?: number;
+  /** Projected 7-day utilization at reset time (percentage) */
+  projectedSevenDay?: number;
 }
 
 /**
@@ -57,7 +61,7 @@ export type DashboardMessage =
   | { type: 'updateTimeline'; events: TimelineEventDisplay[] }
   | { type: 'sessionStart'; sessionPath: string }
   | { type: 'sessionEnd' }
-  | { type: 'updateSessionList'; sessions: SessionInfo[] }
+  | { type: 'updateSessionList'; sessions: SessionInfo[]; isUsingCustomPath?: boolean; customPathDisplay?: string | null }
   | { type: 'discoveryModeChange'; inDiscoveryMode: boolean }
   | { type: 'updateQuota'; quota: QuotaState };
 
@@ -70,7 +74,9 @@ export type WebviewMessage =
   | { type: 'webviewReady' }
   | { type: 'requestStats' }
   | { type: 'selectSession'; sessionPath: string }
-  | { type: 'refreshSessions' };
+  | { type: 'refreshSessions' }
+  | { type: 'browseSessionFolders' }
+  | { type: 'clearCustomPath' };
 
 /**
  * Model usage breakdown entry.
@@ -112,13 +118,15 @@ export interface ToolAnalyticsDisplay {
  */
 export interface TimelineEventDisplay {
   /** Event type for icon selection */
-  type: 'user_prompt' | 'tool_call' | 'tool_result' | 'error';
+  type: 'user_prompt' | 'tool_call' | 'tool_result' | 'error' | 'assistant_response';
   /** Formatted time (e.g., "2:34 PM") */
   time: string;
   /** Event description */
   description: string;
   /** Whether this is an error event */
   isError?: boolean;
+  /** Full text for expandable content (when truncated) */
+  fullText?: string;
 }
 
 /**
@@ -163,4 +171,14 @@ export interface DashboardState {
 
   /** Error details by type (with messages for foldable display) */
   errorDetails: { type: string; count: number; messages: string[] }[];
+
+  /** Summary of file changes (additions/deletions) across all Write/Edit operations */
+  fileChangeSummary?: {
+    /** Number of unique files modified */
+    totalFilesChanged: number;
+    /** Total lines added */
+    totalAdditions: number;
+    /** Total lines deleted */
+    totalDeletions: number;
+  };
 }

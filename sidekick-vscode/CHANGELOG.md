@@ -5,6 +5,27 @@ All notable changes to the Sidekick for Max VS Code extension will be documented
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.7] - 2026-02-02
+
+### Added
+- **Browse Session Folders**: Manually select any Claude project folder to monitor, regardless of workspace path
+  - New "Browse..." button in the Session Analytics dashboard next to the session dropdown
+  - Command palette: "Sidekick: Browse Session Folders..." to browse all Claude project folders in `~/.claude/projects/`
+  - Shows decoded human-readable paths, session counts, and last activity time
+  - Selection persists across VS Code restarts (stored per-workspace)
+  - Custom path indicator shows when using a manually selected folder
+  - "Reset to Auto-Detect Session" command to clear custom selection and revert to workspace-based discovery
+  - Useful when Claude Code is running in a subdirectory or different path than your VS Code workspace
+- **Token Usage Tooltips**: Hover over token metrics to see quota projections and estimated time to exhaustion
+- **Activity Timeline Enhancements**: Claude's text responses now visible in the activity timeline alongside tool calls
+- **Mind Map Subagent Visibility**: Spawned Task agents now appear as distinct nodes in the mind map visualization
+- **Dynamic Node Sizing**: Mind map nodes scale based on content length for better visual hierarchy
+- **Latest Link Highlighting**: Most recent connections in the mind map are visually emphasized
+- **Line Change Statistics**: Files Touched tree view and mind map now show +/- line change counts
+
+### Fixed
+- **Git Repository Detection**: Improved detection for nested git repositories
+
 ## [0.7.6] - 2026-01-31
 
 ### Added

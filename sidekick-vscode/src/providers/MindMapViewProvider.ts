@@ -228,7 +228,8 @@ export class MindMapViewProvider implements vscode.WebviewViewProvider, vscode.D
    */
   private _syncFromSessionMonitor(): void {
     const stats = this._sessionMonitor.getStats();
-    this._state.graph = MindMapDataService.buildGraph(stats);
+    const subagents = this._sessionMonitor.getSubagentStats();
+    this._state.graph = MindMapDataService.buildGraph(stats, subagents);
     this._state.sessionActive = this._sessionMonitor.isActive();
     this._state.lastUpdated = new Date().toISOString();
   }
@@ -371,9 +372,31 @@ export class MindMapViewProvider implements vscode.WebviewViewProvider, vscode.D
       text-anchor: middle;
     }
 
+    .change-label {
+      font-size: 8px;
+      pointer-events: none;
+      text-anchor: middle;
+      font-family: var(--vscode-editor-font-family);
+    }
+
+    .change-label .add {
+      fill: var(--vscode-charts-green, #4caf50);
+    }
+
+    .change-label .del {
+      fill: var(--vscode-charts-red, #f44336);
+    }
+
     .link {
       stroke: var(--vscode-panel-border);
       stroke-opacity: 0.6;
+    }
+
+    .link.latest {
+      stroke: var(--vscode-charts-yellow, #FFD700);
+      stroke-opacity: 1;
+      stroke-width: 3;
+      filter: drop-shadow(0 0 4px var(--vscode-charts-yellow, #FFD700));
     }
 
     /* Tooltip */
@@ -390,6 +413,15 @@ export class MindMapViewProvider implements vscode.WebviewViewProvider, vscode.D
       z-index: 1000;
       max-width: 300px;
       word-wrap: break-word;
+      white-space: pre-line;
+    }
+
+    .tooltip .additions {
+      color: var(--vscode-charts-green, #4caf50);
+    }
+
+    .tooltip .deletions {
+      color: var(--vscode-charts-red, #f44336);
     }
 
     .tooltip.visible {
@@ -481,15 +513,22 @@ export class MindMapViewProvider implements vscode.WebviewViewProvider, vscode.D
         url: '#50E3C2'
       };
 
-      // Node sizes by type
-      const NODE_SIZES = {
-        session: 16,
-        file: 10,
-        tool: 8,
-        todo: 6,
-        subagent: 8,
-        url: 8
+      // Sizing configuration for dynamic node sizes
+      const SIZING_CONFIG = {
+        session:  { base: 16, min: 16, max: 16, scale: 0 },     // Fixed
+        file:     { base: 8,  min: 6,  max: 18, scale: 3 },     // Scales with touches
+        tool:     { base: 6,  min: 5,  max: 16, scale: 2.5 },   // Scales with calls
+        todo:     { base: 6,  min: 6,  max: 6,  scale: 0 },     // Fixed
+        subagent: { base: 8,  min: 6,  max: 14, scale: 2 },     // Scales with events
+        url:      { base: 7,  min: 5,  max: 14, scale: 2 }      // Scales with accesses
       };
+
+      function calculateNodeSize(d) {
+        var config = SIZING_CONFIG[d.type] || SIZING_CONFIG.file;
+        if (!d.count || config.scale === 0) return config.base;
+        var scaled = config.base + config.scale * Math.log2(d.count + 1);
+        return Math.min(config.max, Math.max(config.min, scaled));
+      }
 
       // DOM elements
       const statusEl = document.getElementById('status');
@@ -499,7 +538,7 @@ export class MindMapViewProvider implements vscode.WebviewViewProvider, vscode.D
       const tooltipEl = document.getElementById('tooltip');
 
       // D3 elements
-      let svg, g, simulation, linkGroup, nodeGroup, labelGroup;
+      let svg, g, simulation, linkGroup, nodeGroup, labelGroup, changeGroup;
       let currentNodes = [];
       let currentLinks = [];
 
@@ -530,6 +569,7 @@ export class MindMapViewProvider implements vscode.WebviewViewProvider, vscode.D
         linkGroup = g.append('g').attr('class', 'links');
         nodeGroup = g.append('g').attr('class', 'nodes');
         labelGroup = g.append('g').attr('class', 'labels');
+        changeGroup = g.append('g').attr('class', 'changes');
 
         // Initialize simulation
         simulation = d3.forceSimulation()
@@ -540,7 +580,7 @@ export class MindMapViewProvider implements vscode.WebviewViewProvider, vscode.D
             .strength(-200))
           .force('center', d3.forceCenter(width / 2, height / 2))
           .force('collide', d3.forceCollide()
-            .radius(function(d) { return NODE_SIZES[d.type] + 15; })
+            .radius(function(d) { return calculateNodeSize(d) + 15; })
             .iterations(2));
 
         simulation.on('tick', ticked);
@@ -562,7 +602,11 @@ export class MindMapViewProvider implements vscode.WebviewViewProvider, vscode.D
 
         labelGroup.selectAll('text')
           .attr('x', function(d) { return d.x; })
-          .attr('y', function(d) { return d.y + NODE_SIZES[d.type] + 12; });
+          .attr('y', function(d) { return d.y + calculateNodeSize(d) + 12; });
+
+        changeGroup.selectAll('text')
+          .attr('x', function(d) { return d.x; })
+          .attr('y', function(d) { return d.y + calculateNodeSize(d) + 22; });
       }
 
       /**
@@ -635,8 +679,16 @@ export class MindMapViewProvider implements vscode.WebviewViewProvider, vscode.D
 
         link.enter()
           .append('line')
-          .attr('class', 'link')
-          .attr('stroke-width', 1.5);
+          .attr('class', function(d) { return d.isLatest ? 'link latest' : 'link'; })
+          .attr('stroke-width', function(d) { return d.isLatest ? 3 : 1.5; });
+
+        // Update class on existing links
+        linkGroup.selectAll('line')
+          .attr('class', function(d) { return d.isLatest ? 'link latest' : 'link'; })
+          .attr('stroke-width', function(d) { return d.isLatest ? 3 : 1.5; });
+
+        // Raise latest link to render on top
+        linkGroup.selectAll('line.latest').raise();
 
         // Update nodes
         const node = nodeGroup.selectAll('circle')
@@ -650,16 +702,35 @@ export class MindMapViewProvider implements vscode.WebviewViewProvider, vscode.D
             const isClickable = d.type === 'file' || d.type === 'url';
             return isClickable ? 'node clickable' : 'node';
           })
-          .attr('r', function(d) { return NODE_SIZES[d.type]; })
+          .attr('r', function(d) { return calculateNodeSize(d); })
           .attr('fill', function(d) { return NODE_COLORS[d.type]; })
           .call(drag(simulation))
           .on('click', function(event, d) {
             vscode.postMessage({ type: 'nodeClicked', nodeId: d.id });
           })
           .on('mouseover', function(event, d) {
-            const label = d.fullPath || d.label;
-            const count = d.count ? ' (' + d.count + ')' : '';
-            tooltipEl.textContent = label + count;
+            var label = d.fullPath || d.label;
+            // Build tooltip content
+            if (d.type === 'file') {
+              // For files, show touches and line changes
+              var firstLine = label;
+              if (d.count) {
+                firstLine += ' (' + d.count + ' touch' + (d.count > 1 ? 'es' : '') + ')';
+              }
+              // Show line changes if any exist
+              var hasChanges = (d.additions && d.additions > 0) || (d.deletions && d.deletions > 0);
+              if (hasChanges) {
+                var adds = d.additions || 0;
+                var dels = d.deletions || 0;
+                tooltipEl.innerHTML = firstLine + '<br><span class="additions">+' + adds + '</span> / <span class="deletions">-' + dels + '</span> lines';
+              } else {
+                tooltipEl.textContent = firstLine;
+              }
+            } else {
+              // For other nodes, show count if available
+              var count = d.count ? ' (' + d.count + ')' : '';
+              tooltipEl.textContent = label + count;
+            }
             tooltipEl.classList.add('visible');
           })
           .on('mousemove', function(event) {
@@ -681,13 +752,39 @@ export class MindMapViewProvider implements vscode.WebviewViewProvider, vscode.D
           .attr('class', 'node-label')
           .text(function(d) { return d.label; });
 
+        // Update change labels (for file nodes with +/- changes)
+        var fileNodesWithChanges = nodes.filter(function(d) {
+          return d.type === 'file' && ((d.additions && d.additions > 0) || (d.deletions && d.deletions > 0));
+        });
+
+        var changeLabel = changeGroup.selectAll('text')
+          .data(fileNodesWithChanges, function(d) { return d.id; });
+
+        changeLabel.exit().remove();
+
+        changeLabel.enter()
+          .append('text')
+          .attr('class', 'change-label')
+          .html(function(d) {
+            var adds = d.additions || 0;
+            var dels = d.deletions || 0;
+            return '<tspan class="add">+' + adds + '</tspan> <tspan class="del">-' + dels + '</tspan>';
+          });
+
         // Update merged selections
         nodeGroup.selectAll('circle')
-          .attr('r', function(d) { return NODE_SIZES[d.type]; })
+          .attr('r', function(d) { return calculateNodeSize(d); })
           .attr('fill', function(d) { return NODE_COLORS[d.type]; });
 
         labelGroup.selectAll('text')
           .text(function(d) { return d.label; });
+
+        changeGroup.selectAll('text')
+          .html(function(d) {
+            var adds = d.additions || 0;
+            var dels = d.deletions || 0;
+            return '<tspan class="add">+' + adds + '</tspan> <tspan class="del">-' + dels + '</tspan>';
+          });
 
         // Update simulation
         simulation.nodes(nodes);

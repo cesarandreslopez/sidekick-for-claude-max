@@ -159,7 +159,7 @@ export interface ToolAnalytics {
  */
 export interface TimelineEvent {
   /** Event type for display categorization */
-  type: 'user_prompt' | 'tool_call' | 'tool_result' | 'error' | 'session_start' | 'session_end';
+  type: 'user_prompt' | 'tool_call' | 'tool_result' | 'error' | 'session_start' | 'session_end' | 'assistant_response';
 
   /** ISO 8601 timestamp */
   timestamp: string;
@@ -173,6 +173,7 @@ export interface TimelineEvent {
     toolName?: string;
     isError?: boolean;
     tokenCount?: number;
+    fullText?: string;
   };
 }
 
@@ -190,6 +191,25 @@ export interface PendingToolCall {
 
   /** When the tool was called */
   startTime: Date;
+}
+
+/**
+ * Statistics for a subagent spawned via the Task tool.
+ *
+ * Tracks subagent identity and its tool calls for mind map visualization.
+ */
+export interface SubagentStats {
+  /** Unique agent identifier (from filename, e.g., "a55af98") */
+  agentId: string;
+
+  /** Agent type (e.g., "Explore", "Plan", "Bash") */
+  agentType?: string;
+
+  /** Short description from Task tool input */
+  description?: string;
+
+  /** All tool calls made by this subagent */
+  toolCalls: ToolCall[];
 }
 
 /**

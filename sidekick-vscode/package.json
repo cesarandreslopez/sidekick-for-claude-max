@@ -2,7 +2,7 @@
   "name": "sidekick-for-max",
   "displayName": "Sidekick for Max",
   "description": "AI-powered code completions, transforms, commit messages, RSVP speed reading, and Claude Code session monitoring - all using your Claude Max subscription at no extra cost.",
-  "version": "0.7.6",
+  "version": "0.7.7",
   "publisher": "CesarAndresLopez",
   "author": {
     "name": "Cesar Andres Lopez",
@@ -537,6 +537,16 @@
         "command": "sidekick.sessionDiagnostics",
         "title": "Sidekick: Session Path Diagnostics",
         "icon": "$(info)"
+      },
+      {
+        "command": "sidekick.selectSessionFolder",
+        "title": "Sidekick: Browse Session Folders...",
+        "icon": "$(folder-opened)"
+      },
+      {
+        "command": "sidekick.clearCustomSessionPath",
+        "title": "Sidekick: Reset to Auto-Detect Session",
+        "icon": "$(sync)"
       }
     ],
     "submenus": [

@@ -30,6 +30,7 @@ import { PreCommitReviewService } from "./services/PreCommitReviewService";
 import { PrDescriptionService } from "./services/PrDescriptionService";
 import { getTimeoutManager } from "./services/TimeoutManager";
 import { SessionMonitor } from './services/SessionMonitor';
+import { SessionFolderPicker } from './services/SessionFolderPicker';
 import { MonitorStatusBar } from './services/MonitorStatusBar';
 import { QuotaService } from './services/QuotaService';
 import { InlineCompletionProvider } from "./providers/InlineCompletionProvider";
@@ -88,6 +89,9 @@ let prDescriptionService: PrDescriptionService | undefined;
 
 /** Session monitor for Claude Code sessions */
 let sessionMonitor: SessionMonitor | undefined;
+
+/** Session folder picker for manual session selection */
+let sessionFolderPicker: SessionFolderPicker | undefined;
 
 /** Dashboard view provider for session analytics */
 let dashboardProvider: DashboardViewProvider | undefined;
@@ -175,21 +179,39 @@ export async function activate(context: vscode.ExtensionContext) {
   const enableMonitoring = monitoringConfig.get<boolean>('enableSessionMonitoring') ?? true;
 
   if (enableMonitoring) {
-    sessionMonitor = new SessionMonitor();
+    sessionMonitor = new SessionMonitor(context.workspaceState);
     context.subscriptions.push(sessionMonitor);
+
+    // Create session folder picker
+    sessionFolderPicker = new SessionFolderPicker(sessionMonitor, context.workspaceState);
 
     // Start monitoring in background (don't block activation per EXT-04)
     const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
     if (workspaceFolder) {
-      sessionMonitor.start(workspaceFolder.uri.fsPath).then(active => {
-        if (active) {
-          log(`Claude Code session monitoring started: ${sessionMonitor!.getSessionPath()}`);
-        } else {
-          log('No active Claude Code session detected');
-        }
-      }).catch(error => {
-        logError('Failed to start session monitor', error);
-      });
+      // Check if there's a saved custom path first
+      const customPath = sessionMonitor.getCustomPath();
+      if (customPath) {
+        log(`Using saved custom session path: ${customPath}`);
+        sessionMonitor.startWithCustomPath(customPath).then(active => {
+          if (active) {
+            log(`Claude Code session monitoring started (custom path): ${sessionMonitor!.getSessionPath()}`);
+          } else {
+            log('No active Claude Code session in custom path, will poll...');
+          }
+        }).catch(error => {
+          logError('Failed to start session monitor with custom path', error);
+        });
+      } else {
+        sessionMonitor.start(workspaceFolder.uri.fsPath).then(active => {
+          if (active) {
+            log(`Claude Code session monitoring started: ${sessionMonitor!.getSessionPath()}`);
+          } else {
+            log('No active Claude Code session detected');
+          }
+        }).catch(error => {
+          logError('Failed to start session monitor', error);
+        });
+      }
     }
 
     // Log token usage events for debugging
@@ -436,6 +458,50 @@ export async function activate(context: vscode.ExtensionContext) {
     })
   );
 
+  // Register select session folder command
+  context.subscriptions.push(
+    vscode.commands.registerCommand('sidekick.selectSessionFolder', async () => {
+      if (!sessionFolderPicker) {
+        vscode.window.showErrorMessage('Session folder picker not initialized');
+        return;
+      }
+
+      await sessionFolderPicker.selectAndMonitorSession();
+    })
+  );
+
+  // Register clear custom session path command
+  context.subscriptions.push(
+    vscode.commands.registerCommand('sidekick.clearCustomSessionPath', async () => {
+      if (!sessionMonitor) {
+        vscode.window.showErrorMessage('Session monitor not initialized');
+        return;
+      }
+
+      if (!sessionMonitor.isUsingCustomPath()) {
+        vscode.window.showInformationMessage('Already using auto-detect mode');
+        return;
+      }
+
+      await sessionMonitor.clearCustomPath();
+
+      // Restart with workspace-based discovery
+      const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+      if (workspaceFolder) {
+        const active = await sessionMonitor.start(workspaceFolder.uri.fsPath);
+        if (active) {
+          vscode.window.showInformationMessage('Switched to auto-detect mode');
+          log(`Reset to auto-detect, now monitoring: ${sessionMonitor.getSessionPath()}`);
+        } else {
+          vscode.window.showInformationMessage('Switched to auto-detect mode. Waiting for session...');
+          log('Reset to auto-detect, no session found yet');
+        }
+      } else {
+        vscode.window.showInformationMessage('Custom path cleared. Open a workspace to auto-detect sessions.');
+      }
+    })
+  );
+
   // Register status bar menu command
   context.subscriptions.push(
     vscode.commands.registerCommand("sidekick.showMenu", async () => {
@@ -585,7 +651,8 @@ export async function activate(context: vscode.ExtensionContext) {
 
           if (result.message) {
             // Set message in SCM input box (skip confirmation if regenerating)
-            const success = await gitService!.setCommitMessage(result.message, !isRegenerate);
+            // Pass repoPath to ensure message goes to the correct repository
+            const success = await gitService!.setCommitMessage(result.message, !isRegenerate, result.repoPath);
 
             if (success) {
               statusBarManager?.setConnected();

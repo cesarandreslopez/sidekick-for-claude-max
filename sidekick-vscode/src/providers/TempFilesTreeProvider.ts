@@ -9,6 +9,7 @@
  * - Extracts file paths from Read/Write/Edit/MultiEdit/Bash tool calls
  * - Deduplicates files (each file appears once)
  * - Displays operation type (read vs write/edit)
+ * - Shows line change statistics (+additions / -deletions) for modified files
  * - Click to open file in editor
  * - Real-time updates from SessionMonitor events
  *
@@ -17,10 +18,11 @@
 
 import * as vscode from 'vscode';
 import * as path from 'path';
-import * as fs from 'fs';
 import type { SessionMonitor } from '../services/SessionMonitor';
 import type { ToolCall } from '../types/claudeSession';
+import { scanSubagentDir } from '../services/SubagentFileScanner';
 import { log } from '../services/Logger';
+import { calculateLineChanges } from '../utils/lineChangeCalculator';
 
 /**
  * Represents a file touched during the Claude Code session.
@@ -37,6 +39,12 @@ export interface TempFileItem {
 
   /** Type of operation performed on the file */
   operation: 'read' | 'write' | 'edit';
+
+  /** Number of lines added to this file */
+  additions: number;
+
+  /** Number of lines deleted from this file */
+  deletions: number;
 }
 
 /**
@@ -141,7 +149,7 @@ export class TempFilesTreeProvider implements vscode.TreeDataProvider<TempFileIt
       if (command) {
         const filePaths = this.extractFilePathsFromBash(command);
         for (const filePath of filePaths) {
-          this.addFile(filePath, 'write', timestamp);
+          this.addFile(filePath, 'write', timestamp, 0, 0);
         }
       }
       return;
@@ -149,12 +157,27 @@ export class TempFilesTreeProvider implements vscode.TreeDataProvider<TempFileIt
 
     // Handle MultiEdit which has an edits array
     if (toolName === 'MultiEdit' && call.input.edits) {
-      const edits = call.input.edits as Array<{ file_path?: string; path?: string }>;
+      const edits = call.input.edits as Array<{ file_path?: string; path?: string; old_string?: string; new_string?: string }>;
+      // Group edits by file path and calculate line changes per file
+      const fileChanges = new Map<string, { additions: number; deletions: number }>();
+
       for (const edit of edits) {
         const filePath = edit.file_path || edit.path;
         if (filePath && typeof filePath === 'string') {
-          this.addFile(filePath, 'edit', timestamp);
+          const changes = calculateLineChanges('Edit', {
+            old_string: edit.old_string || '',
+            new_string: edit.new_string || ''
+          });
+
+          const existing = fileChanges.get(filePath) || { additions: 0, deletions: 0 };
+          existing.additions += changes.additions;
+          existing.deletions += changes.deletions;
+          fileChanges.set(filePath, existing);
         }
+      }
+
+      for (const [filePath, changes] of fileChanges) {
+        this.addFile(filePath, 'edit', timestamp, changes.additions, changes.deletions);
       }
       return;
     }
@@ -164,6 +187,9 @@ export class TempFilesTreeProvider implements vscode.TreeDataProvider<TempFileIt
     if (!filePath || typeof filePath !== 'string') {
       return;
     }
+
+    // Calculate line changes for Write/Edit operations
+    const lineChanges = calculateLineChanges(toolName, call.input);
 
     // Determine operation type
     let operation: 'read' | 'write' | 'edit';
@@ -182,7 +208,7 @@ export class TempFilesTreeProvider implements vscode.TreeDataProvider<TempFileIt
         return;
     }
 
-    this.addFile(filePath, operation, timestamp);
+    this.addFile(filePath, operation, timestamp, lineChanges.additions, lineChanges.deletions);
   }
 
   /**
@@ -312,15 +338,40 @@ export class TempFilesTreeProvider implements vscode.TreeDataProvider<TempFileIt
   }
 
   /**
-   * Adds a file to the temp files list.
+   * Adds a file to the temp files list or updates existing entry.
+   *
+   * If the file has already been seen, accumulates line change statistics
+   * and updates the timestamp and operation type.
    *
    * @param filePath - Full file path
    * @param operation - Type of operation
    * @param timestamp - When the file was touched
+   * @param additions - Number of lines added (default 0)
+   * @param deletions - Number of lines deleted (default 0)
    */
-  private addFile(filePath: string, operation: 'read' | 'write' | 'edit', timestamp: Date): void {
-    // Skip if already seen
+  private addFile(
+    filePath: string,
+    operation: 'read' | 'write' | 'edit',
+    timestamp: Date,
+    additions: number = 0,
+    deletions: number = 0
+  ): void {
+    // Check if file already exists
     if (this.seenFiles.has(filePath)) {
+      // Find and update existing item
+      const existingItem = this.tempFiles.find(item => item.path === filePath);
+      if (existingItem) {
+        // Accumulate line changes
+        existingItem.additions += additions;
+        existingItem.deletions += deletions;
+        // Update timestamp to most recent touch
+        existingItem.timestamp = timestamp;
+        // Upgrade operation if needed (read -> edit/write)
+        if (operation !== 'read') {
+          existingItem.operation = operation;
+        }
+        this.refresh();
+      }
       return;
     }
 
@@ -332,7 +383,9 @@ export class TempFilesTreeProvider implements vscode.TreeDataProvider<TempFileIt
       label: path.basename(filePath),
       path: filePath,
       timestamp,
-      operation
+      operation,
+      additions,
+      deletions
     };
 
     this.tempFiles.push(item);
@@ -351,7 +404,7 @@ export class TempFilesTreeProvider implements vscode.TreeDataProvider<TempFileIt
   }
 
   /**
-   * Scans subagent JSONL files for tool calls.
+   * Scans subagent JSONL files for tool calls using the shared scanner.
    * Called periodically to pick up subagent file operations.
    */
   private scanSubagentFiles(): void {
@@ -359,67 +412,30 @@ export class TempFilesTreeProvider implements vscode.TreeDataProvider<TempFileIt
       return;
     }
 
-    // Subagent files are in '<sessionId>/subagents/' subdirectory
-    const subagentsDir = path.join(this.sessionDir, this.sessionId, 'subagents');
+    // Use the shared SubagentFileScanner
+    const subagentStats = scanSubagentDir(this.sessionDir, this.sessionId);
 
-    try {
-      const files = fs.readdirSync(subagentsDir);
-      const agentFilePattern = /^agent-.*\.jsonl$/;
+    // Track which agents we've already processed
+    let hasNewData = false;
 
-      for (const file of files) {
-        if (!agentFilePattern.test(file)) {
-          continue;
-        }
-
-        // Skip if already scanned
-        if (this.scannedAgentFiles.has(file)) {
-          continue;
-        }
-
-        const filePath = path.join(subagentsDir, file);
-        this.parseAgentFile(filePath);
-        this.scannedAgentFiles.add(file);
+    for (const agent of subagentStats) {
+      // Skip if we've already scanned this agent's file
+      const agentFile = `agent-${agent.agentId}.jsonl`;
+      if (this.scannedAgentFiles.has(agentFile)) {
+        continue;
       }
-    } catch {
-      // Directory read failed - ignore (subagents dir may not exist)
+
+      // Process tool calls from this agent
+      for (const call of agent.toolCalls) {
+        this.handleToolCall(call);
+      }
+
+      this.scannedAgentFiles.add(agentFile);
+      hasNewData = true;
     }
-  }
 
-  /**
-   * Parses a subagent JSONL file and extracts tool calls.
-   *
-   * @param filePath - Path to agent JSONL file
-   */
-  private parseAgentFile(filePath: string): void {
-    try {
-      const content = fs.readFileSync(filePath, 'utf-8');
-      const lines = content.split('\n').filter(line => line.trim());
-
-      for (const line of lines) {
-        try {
-          const event = JSON.parse(line);
-
-          // Look for tool_use events
-          if (event.type === 'assistant' && event.message?.content) {
-            for (const block of event.message.content) {
-              if (block.type === 'tool_use') {
-                const toolCall: ToolCall = {
-                  name: block.name,
-                  input: block.input || {},
-                  timestamp: new Date(event.timestamp || Date.now())
-                };
-                this.handleToolCall(toolCall);
-              }
-            }
-          }
-        } catch {
-          // Skip malformed lines
-        }
-      }
-
+    if (hasNewData) {
       this.refresh();
-    } catch {
-      // File read failed - ignore
     }
   }
 
@@ -444,12 +460,19 @@ export class TempFilesTreeProvider implements vscode.TreeDataProvider<TempFileIt
       element.operation === 'read' ? 'file' : 'edit'
     );
 
-    // Set tooltip with full path and operation
+    // Set tooltip with full path, operation, and line changes
     const formattedTime = element.timestamp.toLocaleTimeString();
-    item.tooltip = `${element.path}\n${element.operation} at ${formattedTime}`;
+    const hasChanges = element.additions > 0 || element.deletions > 0;
+    const changeInfo = hasChanges ? `\n+${element.additions} / -${element.deletions} lines` : '';
+    item.tooltip = `${element.path}\n${element.operation} at ${formattedTime}${changeInfo}`;
 
-    // Set description with relative timestamp
-    item.description = this.formatRelativeTime(element.timestamp);
+    // Set description with line changes (for write/edit) and relative timestamp
+    const relativeTime = this.formatRelativeTime(element.timestamp);
+    if (hasChanges) {
+      item.description = `+${element.additions} / -${element.deletions} • ${relativeTime}`;
+    } else {
+      item.description = relativeTime;
+    }
 
     // Set resourceUri to enable file icon theme
     item.resourceUri = vscode.Uri.file(element.path);

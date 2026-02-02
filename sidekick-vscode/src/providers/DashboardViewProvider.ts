@@ -18,9 +18,10 @@ import * as vscode from 'vscode';
 import type { SessionMonitor } from '../services/SessionMonitor';
 import type { QuotaService } from '../services/QuotaService';
 import type { QuotaState as DashboardQuotaState } from '../types/dashboard';
-import type { TokenUsage, SessionStats, ToolAnalytics, TimelineEvent } from '../types/claudeSession';
+import type { TokenUsage, SessionStats, ToolAnalytics, TimelineEvent, ToolCall } from '../types/claudeSession';
 import type { DashboardMessage, WebviewMessage, DashboardState } from '../types/dashboard';
 import { ModelPricingService } from '../services/ModelPricingService';
+import { calculateLineChanges } from '../utils/lineChangeCalculator';
 import { BurnRateCalculator } from '../services/BurnRateCalculator';
 import { log } from '../services/Logger';
 
@@ -230,6 +231,16 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
       case 'refreshSessions':
         this._sendSessionList();
         break;
+
+      case 'browseSessionFolders':
+        log('Dashboard: user requested to browse session folders');
+        vscode.commands.executeCommand('sidekick.selectSessionFolder');
+        break;
+
+      case 'clearCustomPath':
+        log('Dashboard: user requested to clear custom path');
+        vscode.commands.executeCommand('sidekick.clearCustomSessionPath');
+        break;
     }
   }
 
@@ -338,10 +349,11 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
    */
   private _updateTimelineState(): void {
     this._state.timeline = this._timeline.map(e => ({
-      type: e.type as 'user_prompt' | 'tool_call' | 'tool_result' | 'error',
+      type: e.type as 'user_prompt' | 'tool_call' | 'tool_result' | 'error' | 'assistant_response',
       time: new Date(e.timestamp).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
       description: e.description,
-      isError: e.metadata?.isError
+      isError: e.metadata?.isError,
+      fullText: e.metadata?.fullText
     }));
   }
 
@@ -487,6 +499,45 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
     for (const event of stats.recentUsageEvents) {
       this._burnRateCalculator.addEvent(event.tokens, event.timestamp);
     }
+
+    // Compute file change summary
+    this._state.fileChangeSummary = this._computeFileChangeSummary(stats.toolCalls);
+  }
+
+  /**
+   * Computes file change summary from tool calls.
+   *
+   * Aggregates additions and deletions across all Write, Edit, and MultiEdit
+   * tool calls, counting unique files modified.
+   */
+  private _computeFileChangeSummary(toolCalls: ToolCall[]): {
+    totalFilesChanged: number;
+    totalAdditions: number;
+    totalDeletions: number;
+  } {
+    const FILE_TOOLS = ['Write', 'Edit', 'MultiEdit'];
+    const filesModified = new Set<string>();
+    let totalAdditions = 0;
+    let totalDeletions = 0;
+
+    for (const call of toolCalls) {
+      if (FILE_TOOLS.includes(call.name)) {
+        const filePath = call.input.file_path as string;
+        if (filePath) {
+          filesModified.add(filePath);
+        }
+
+        const changes = calculateLineChanges(call.name, call.input);
+        totalAdditions += changes.additions;
+        totalDeletions += changes.deletions;
+      }
+    }
+
+    return {
+      totalFilesChanged: filesModified.size,
+      totalAdditions,
+      totalDeletions
+    };
   }
 
   /**
@@ -513,6 +564,7 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
    */
   private _sendSessionList(): void {
     const sessions = this._sessionMonitor.getAvailableSessions();
+    const customPath = this._sessionMonitor.getCustomPath();
     this._postMessage({
       type: 'updateSessionList',
       sessions: sessions.map(s => ({
@@ -520,8 +572,24 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
         filename: s.filename,
         modifiedTime: s.modifiedTime.toISOString(),
         isCurrent: s.isCurrent
-      }))
+      })),
+      isUsingCustomPath: this._sessionMonitor.isUsingCustomPath(),
+      customPathDisplay: customPath ? this._getShortPath(customPath) : null
     });
+  }
+
+  /**
+   * Gets a shortened display version of a path.
+   */
+  private _getShortPath(fullPath: string): string {
+    // Get just the last part of the encoded path (the project folder name)
+    const parts = fullPath.split(/[/\\]/);
+    const encoded = parts[parts.length - 1] || parts[parts.length - 2] || fullPath;
+    // Decode it for display
+    if (encoded.startsWith('-')) {
+      return '/' + encoded.substring(1).replace(/-/g, '/');
+    }
+    return encoded.replace(/-/g, '/');
   }
 
   /**
@@ -658,6 +726,41 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
       font-size: 16px;
       font-weight: 600;
       font-family: var(--vscode-editor-font-family);
+    }
+
+    .file-changes-display {
+      background: var(--vscode-input-background);
+      border: 1px solid var(--vscode-input-border);
+      border-radius: 4px;
+      padding: 10px 12px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 14px;
+      font-family: var(--vscode-editor-font-family);
+    }
+
+    .file-changes-display .file-count {
+      font-weight: 500;
+    }
+
+    .file-changes-display .separator {
+      color: var(--vscode-descriptionForeground);
+    }
+
+    .file-changes-display .additions {
+      color: var(--vscode-charts-green, #4caf50);
+      font-weight: 600;
+    }
+
+    .file-changes-display .deletions {
+      color: var(--vscode-charts-red, #f44336);
+      font-weight: 600;
+    }
+
+    .file-changes-display .lines-label {
+      color: var(--vscode-descriptionForeground);
+      font-size: 12px;
     }
 
     .cost-display {
@@ -924,6 +1027,102 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
       margin-top: 2px;
     }
 
+    .quota-card .quota-projection {
+      font-size: 9px;
+      margin-top: 2px;
+      display: none;
+    }
+
+    .quota-card .quota-projection.visible {
+      display: block;
+    }
+
+    .quota-card .quota-projection.warning {
+      color: var(--vscode-editorWarning-foreground);
+    }
+
+    .quota-card .quota-projection.danger {
+      color: var(--vscode-editorError-foreground);
+    }
+
+    .section-title-with-info {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .info-icon {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 14px;
+      height: 14px;
+      font-size: 10px;
+      border-radius: 50%;
+      background: var(--vscode-badge-background);
+      color: var(--vscode-badge-foreground);
+      cursor: help;
+      position: relative;
+    }
+
+    .info-icon:hover .tooltip {
+      display: block;
+    }
+
+    .tooltip {
+      display: none;
+      position: absolute;
+      top: 100%;
+      left: 50%;
+      transform: translateX(-50%);
+      margin-top: 6px;
+      padding: 8px 10px;
+      background: var(--vscode-editorWidget-background);
+      border: 1px solid var(--vscode-editorWidget-border);
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: normal;
+      text-transform: none;
+      letter-spacing: normal;
+      white-space: normal;
+      width: 220px;
+      z-index: 100;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+      color: var(--vscode-foreground);
+    }
+
+    .tooltip::before {
+      content: '';
+      position: absolute;
+      bottom: 100%;
+      left: 50%;
+      transform: translateX(-50%);
+      border: 6px solid transparent;
+      border-bottom-color: var(--vscode-editorWidget-border);
+    }
+
+    .tooltip::after {
+      content: '';
+      position: absolute;
+      bottom: 100%;
+      left: 50%;
+      transform: translateX(-50%);
+      border: 5px solid transparent;
+      border-bottom-color: var(--vscode-editorWidget-background);
+    }
+
+    .tooltip p {
+      margin: 0 0 6px 0;
+    }
+
+    .tooltip p:last-child {
+      margin-bottom: 0;
+    }
+
+    .tooltip strong {
+      color: var(--vscode-foreground);
+    }
+
     .quota-error {
       background: var(--vscode-input-background);
       border: 1px solid var(--vscode-input-border);
@@ -1018,6 +1217,26 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
 
     .timeline-item.error {
       background: var(--vscode-inputValidation-errorBackground);
+    }
+
+    .timeline-item.assistant {
+      background: var(--vscode-textBlockQuote-background);
+      border-left: 2px solid var(--vscode-textLink-foreground);
+    }
+
+    .timeline-item .expand-link {
+      color: var(--vscode-textLink-foreground);
+      cursor: pointer;
+      font-size: 10px;
+    }
+
+    .timeline-item .expand-link:hover {
+      text-decoration: underline;
+    }
+
+    .timeline-item.assistant .description {
+      white-space: normal;
+      word-wrap: break-word;
     }
 
     .error-list {
@@ -1121,7 +1340,8 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
       outline-offset: -1px;
     }
 
-    .session-selector .refresh-btn {
+    .session-selector .refresh-btn,
+    .session-selector .browse-btn {
       padding: 4px 6px;
       font-size: 11px;
       background: var(--vscode-button-secondaryBackground);
@@ -1131,8 +1351,52 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
       cursor: pointer;
     }
 
-    .session-selector .refresh-btn:hover {
+    .session-selector .refresh-btn:hover,
+    .session-selector .browse-btn:hover {
       background: var(--vscode-button-secondaryHoverBackground);
+    }
+
+    .session-selector .browse-btn {
+      background: var(--vscode-button-background);
+      color: var(--vscode-button-foreground);
+    }
+
+    .session-selector .browse-btn:hover {
+      background: var(--vscode-button-hoverBackground);
+    }
+
+    .custom-path-indicator {
+      display: none;
+      margin-bottom: 8px;
+      padding: 6px 8px;
+      background: var(--vscode-inputValidation-infoBackground);
+      border: 1px solid var(--vscode-inputValidation-infoBorder);
+      border-radius: 4px;
+      font-size: 11px;
+    }
+
+    .custom-path-indicator.visible {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    .custom-path-indicator .path-text {
+      flex: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .custom-path-indicator .reset-link {
+      color: var(--vscode-textLink-foreground);
+      cursor: pointer;
+      white-space: nowrap;
+    }
+
+    .custom-path-indicator .reset-link:hover {
+      text-decoration: underline;
     }
   </style>
 </head>
@@ -1143,12 +1407,18 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
     <span id="status" class="status inactive">No Session</span>
   </div>
 
+  <div class="custom-path-indicator" id="custom-path-indicator" title="Using a manually selected session folder">
+    <span class="path-text" id="custom-path-text">Custom: /path/to/folder</span>
+    <span class="reset-link" id="reset-custom-path" title="Switch back to auto-detect mode">Reset</span>
+  </div>
+
   <div class="session-selector" title="Select a session to view its analytics">
     <label for="session-select">Session:</label>
     <select id="session-select">
       <option value="">No sessions available</option>
     </select>
     <button class="refresh-btn" id="refresh-sessions" title="Refresh session list">↻</button>
+    <button class="browse-btn" id="browse-folders" title="Browse all Claude session folders">Browse...</button>
   </div>
 
   <div id="content">
@@ -1160,7 +1430,15 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
 
   <div id="dashboard" style="display: none;">
     <div class="section" title="Total tokens used in this session, broken down by type">
-      <div class="section-title">Token Usage</div>
+      <div class="section-title section-title-with-info">
+        Token Usage
+        <span class="info-icon">?<div class="tooltip">
+          <p><strong>Input:</strong> Tokens sent TO Claude (your messages, file contents, system prompts)</p>
+          <p><strong>Output:</strong> Tokens generated BY Claude (responses, code)</p>
+          <p><strong>Cache Write/Read:</strong> Prompt caching optimization—reuses context between messages</p>
+          <p>Only assistant responses contribute token usage. A typical response: 500-2,000 tokens.</p>
+        </div></span>
+      </div>
       <div class="token-grid">
         <div class="token-card" title="Tokens sent to Claude (your messages, system prompts, file contents)">
           <div class="label">Input</div>
@@ -1178,6 +1456,18 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
           <div class="label">Cache Read</div>
           <div class="value" id="cache-read-tokens">0</div>
         </div>
+      </div>
+    </div>
+
+    <div class="section" id="file-changes-section" style="display: none;" title="Files modified and lines changed during this session">
+      <div class="section-title">File Changes</div>
+      <div class="file-changes-display" title="Number of unique files modified with line additions and deletions">
+        <span class="file-count" id="file-count">0 files</span>
+        <span class="separator">|</span>
+        <span class="additions" id="file-additions">+0</span>
+        <span class="separator">/</span>
+        <span class="deletions" id="file-deletions">-0</span>
+        <span class="lines-label">lines</span>
       </div>
     </div>
 
@@ -1201,6 +1491,7 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
                 <span class="quota-percent" id="quota-5h-percent">0%</span>
               </div>
               <div class="quota-reset" id="quota-5h-reset">-</div>
+              <div class="quota-projection" id="quota-5h-projection"></div>
             </div>
             <div class="quota-card" title="Usage in the last 7 days">
               <div class="quota-label">7-Day</div>
@@ -1209,6 +1500,7 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
                 <span class="quota-percent" id="quota-7d-percent">0%</span>
               </div>
               <div class="quota-reset" id="quota-7d-reset">-</div>
+              <div class="quota-projection" id="quota-7d-projection"></div>
             </div>
           </div>
         </div>
@@ -1297,6 +1589,10 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
       const lastUpdatedEl = document.getElementById('last-updated');
       const sessionSelectEl = document.getElementById('session-select');
       const refreshSessionsBtn = document.getElementById('refresh-sessions');
+      const browseFoldersBtn = document.getElementById('browse-folders');
+      const customPathIndicator = document.getElementById('custom-path-indicator');
+      const customPathText = document.getElementById('custom-path-text');
+      const resetCustomPath = document.getElementById('reset-custom-path');
 
       // Context gauge chart
       let contextChart = null;
@@ -1504,6 +1800,35 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
       }
 
       /**
+       * Updates the projection display element.
+       * @param projectionEl - The DOM element to update
+       * @param projected - Projected utilization percentage (or undefined)
+       */
+      function updateProjectionDisplay(projectionEl, projected) {
+        if (!projectionEl) return;
+
+        // Hide if no projection data available
+        if (projected === undefined) {
+          projectionEl.classList.remove('visible', 'warning', 'danger');
+          projectionEl.textContent = '';
+          return;
+        }
+
+        projectionEl.classList.add('visible');
+        projectionEl.classList.remove('warning', 'danger');
+
+        if (projected >= 100) {
+          projectionEl.textContent = 'May reach limit';
+          projectionEl.classList.add('danger');
+        } else if (projected >= 80) {
+          projectionEl.textContent = '~' + Math.round(projected) + '% by reset';
+          projectionEl.classList.add('warning');
+        } else {
+          projectionEl.textContent = '~' + Math.round(projected) + '% by reset';
+        }
+      }
+
+      /**
        * Updates the quota display with new data.
        */
       function updateQuota(quota) {
@@ -1534,18 +1859,22 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
         // Update 5-hour gauge
         var percent5hEl = document.getElementById('quota-5h-percent');
         var reset5hEl = document.getElementById('quota-5h-reset');
+        var projection5hEl = document.getElementById('quota-5h-projection');
         updateQuotaGauge(quota5hChart, percent5hEl, quota.fiveHour.utilization);
         if (reset5hEl) {
           reset5hEl.textContent = formatResetTime(quota.fiveHour.resetsAt);
         }
+        updateProjectionDisplay(projection5hEl, quota.projectedFiveHour);
 
         // Update 7-day gauge
         var percent7dEl = document.getElementById('quota-7d-percent');
         var reset7dEl = document.getElementById('quota-7d-reset');
+        var projection7dEl = document.getElementById('quota-7d-projection');
         updateQuotaGauge(quota7dChart, percent7dEl, quota.sevenDay.utilization);
         if (reset7dEl) {
           reset7dEl.textContent = formatResetTime(quota.sevenDay.resetsAt);
         }
+        updateProjectionDisplay(projection7dEl, quota.projectedSevenDay);
       }
 
       /**
@@ -1602,19 +1931,60 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
           'user_prompt': '💬',
           'tool_call': '🔧',
           'tool_result': '✓',
-          'error': '❌'
+          'error': '❌',
+          'assistant_response': '🤖'
         };
 
-        timelineEl.innerHTML = events.map(function(event) {
+        timelineEl.innerHTML = events.map(function(event, idx) {
           const icon = iconMap[event.type] || '$(circle)';
           const errorClass = event.isError ? ' error' : '';
+          const assistantClass = event.type === 'assistant_response' ? ' assistant' : '';
 
-          return '<div class="timeline-item' + errorClass + '">' +
+          // Add expand link for assistant responses with full text
+          let expandLink = '';
+          if (event.type === 'assistant_response' && event.fullText) {
+            expandLink = ' <span class="expand-link" data-idx="' + idx + '" data-expanded="false">[more]</span>';
+          }
+
+          return '<div class="timeline-item' + errorClass + assistantClass + '" data-idx="' + idx + '">' +
             '<span class="time">' + event.time + '</span>' +
             '<span class="icon">' + icon + '</span>' +
-            '<span class="description">' + event.description + '</span>' +
+            '<span class="description" data-truncated="' + escapeHtml(event.description) + '" data-full="' + (event.fullText ? escapeHtml(event.fullText) : '') + '">' + escapeHtml(event.description) + expandLink + '</span>' +
           '</div>';
         }).join('');
+
+        // Add click handlers for expand/collapse
+        timelineEl.querySelectorAll('.expand-link').forEach(function(link) {
+          link.addEventListener('click', function(e) {
+            e.stopPropagation();
+            const idx = link.getAttribute('data-idx');
+            const item = timelineEl.querySelector('.timeline-item[data-idx="' + idx + '"]');
+            if (!item) return;
+
+            const descEl = item.querySelector('.description');
+            if (!descEl) return;
+
+            const isExpanded = link.getAttribute('data-expanded') === 'true';
+            const truncated = descEl.getAttribute('data-truncated');
+            const full = descEl.getAttribute('data-full');
+
+            if (isExpanded) {
+              // Collapse
+              descEl.innerHTML = truncated + ' <span class="expand-link" data-idx="' + idx + '" data-expanded="false">[more]</span>';
+              link.setAttribute('data-expanded', 'false');
+            } else {
+              // Expand
+              descEl.innerHTML = full + ' <span class="expand-link" data-idx="' + idx + '" data-expanded="true">[less]</span>';
+              link.setAttribute('data-expanded', 'true');
+            }
+
+            // Re-attach click handler to new link
+            const newLink = descEl.querySelector('.expand-link');
+            if (newLink) {
+              newLink.addEventListener('click', arguments.callee);
+            }
+          });
+        });
       }
 
       /**
@@ -1666,8 +2036,18 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
       /**
        * Updates the session selector dropdown.
        */
-      function updateSessionList(sessions) {
+      function updateSessionList(sessions, isUsingCustomPath, customPathDisplay) {
         if (!sessionSelectEl) return;
+
+        // Update custom path indicator
+        if (customPathIndicator && customPathText) {
+          if (isUsingCustomPath && customPathDisplay) {
+            customPathIndicator.classList.add('visible');
+            customPathText.textContent = 'Custom: ' + customPathDisplay;
+          } else {
+            customPathIndicator.classList.remove('visible');
+          }
+        }
 
         // Clear current options
         sessionSelectEl.innerHTML = '';
@@ -1721,6 +2101,31 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
       }
 
       /**
+       * Updates the file changes display.
+       */
+      function updateFileChanges(summary) {
+        var sectionEl = document.getElementById('file-changes-section');
+        var fileCountEl = document.getElementById('file-count');
+        var additionsEl = document.getElementById('file-additions');
+        var deletionsEl = document.getElementById('file-deletions');
+
+        if (!sectionEl || !fileCountEl || !additionsEl || !deletionsEl) return;
+
+        // Hide section if no changes
+        if (!summary || (summary.totalFilesChanged === 0 && summary.totalAdditions === 0 && summary.totalDeletions === 0)) {
+          sectionEl.style.display = 'none';
+          return;
+        }
+
+        // Show section with data
+        sectionEl.style.display = 'block';
+        var fileCount = summary.totalFilesChanged || 0;
+        fileCountEl.textContent = fileCount + ' file' + (fileCount !== 1 ? 's' : '');
+        additionsEl.textContent = '+' + formatNumber(summary.totalAdditions || 0);
+        deletionsEl.textContent = '-' + formatNumber(summary.totalDeletions || 0);
+      }
+
+      /**
        * Updates the dashboard with new state.
        */
       function updateDashboard(state) {
@@ -1769,6 +2174,9 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
         if (state.errorDetails) {
           updateErrorDetails(state.errorDetails);
         }
+
+        // Update file changes
+        updateFileChanges(state.fileChangeSummary);
 
         // Update timestamp
         if (state.lastUpdated) {
@@ -1821,7 +2229,7 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
             break;
 
           case 'updateSessionList':
-            updateSessionList(message.sessions);
+            updateSessionList(message.sessions, message.isUsingCustomPath, message.customPathDisplay);
             break;
 
           case 'updateQuota':
@@ -1843,6 +2251,18 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
       if (refreshSessionsBtn) {
         refreshSessionsBtn.addEventListener('click', function() {
           vscode.postMessage({ type: 'refreshSessions' });
+        });
+      }
+
+      if (browseFoldersBtn) {
+        browseFoldersBtn.addEventListener('click', function() {
+          vscode.postMessage({ type: 'browseSessionFolders' });
+        });
+      }
+
+      if (resetCustomPath) {
+        resetCustomPath.addEventListener('click', function() {
+          vscode.postMessage({ type: 'clearCustomPath' });
         });
       }
 

@@ -19,10 +19,11 @@
 
 import * as vscode from 'vscode';
 import * as fs from 'fs';
-import * as path from 'path';
-import { findActiveSession, findAllSessions, getSessionDirectory, discoverSessionDirectory } from './SessionPathResolver';
+import path from 'path';
+import { findActiveSession, findAllSessions, getSessionDirectory, discoverSessionDirectory, findSessionsInDirectory } from './SessionPathResolver';
 import { JsonlParser, extractTokenUsage } from './JsonlParser';
-import { ClaudeSessionEvent, TokenUsage, ToolCall, SessionStats, ToolAnalytics, TimelineEvent, PendingToolCall } from '../types/claudeSession';
+import { scanSubagentDir } from './SubagentFileScanner';
+import { ClaudeSessionEvent, TokenUsage, ToolCall, SessionStats, ToolAnalytics, TimelineEvent, PendingToolCall, SubagentStats } from '../types/claudeSession';
 import { log, logError } from './Logger';
 
 /**
@@ -61,6 +62,9 @@ import { log, logError } from './Logger';
  * monitor.dispose();
  * ```
  */
+/** Storage key for persisted custom session path */
+const CUSTOM_SESSION_PATH_KEY = 'sidekick.customSessionPath';
+
 export class SessionMonitor implements vscode.Disposable {
   /** File watcher for session directory */
   private watcher: fs.FSWatcher | undefined;
@@ -73,6 +77,12 @@ export class SessionMonitor implements vscode.Disposable {
 
   /** Path to current session file */
   private sessionPath: string | null = null;
+
+  /** Custom session directory (overrides workspace-based discovery) */
+  private customSessionDir: string | null = null;
+
+  /** Workspace state for persistence */
+  private readonly workspaceState: vscode.Memento | undefined;
 
   /** File read position for incremental reads */
   private filePosition: number = 0;
@@ -106,6 +116,12 @@ export class SessionMonitor implements vscode.Disposable {
 
   /** When the session started (first event timestamp) */
   private sessionStartTime: Date | null = null;
+
+  /** Subagent statistics from subagent JSONL files */
+  private _subagentStats: SubagentStats[] = [];
+
+  /** Session ID for subagent scanning */
+  private sessionId: string | null = null;
 
   // Event emitters for external consumers
   private readonly _onTokenUsage = new vscode.EventEmitter<TokenUsage>();
@@ -141,8 +157,13 @@ export class SessionMonitor implements vscode.Disposable {
    * Creates a new SessionMonitor.
    *
    * Initializes the parser and empty statistics. Call start() to begin monitoring.
+   *
+   * @param workspaceState - Optional workspace state for persisting custom session path
    */
-  constructor() {
+  constructor(workspaceState?: vscode.Memento) {
+    this.workspaceState = workspaceState;
+    // Load saved custom path on construction
+    this.customSessionDir = workspaceState?.get<string>(CUSTOM_SESSION_PATH_KEY) || null;
     // Initialize empty statistics
     this.stats = {
       totalInputTokens: 0,
@@ -223,6 +244,7 @@ export class SessionMonitor implements vscode.Disposable {
 
     try {
       this.isWaitingForSession = false;
+      this.sessionId = path.basename(this.sessionPath, '.jsonl');
 
       // Read existing content
       await this.readInitialContent();
@@ -384,6 +406,7 @@ export class SessionMonitor implements vscode.Disposable {
   private async attachToSession(sessionPath: string): Promise<void> {
     const wasWaiting = this.isWaitingForSession;
     this.sessionPath = sessionPath;
+    this.sessionId = path.basename(sessionPath, '.jsonl');
     this.isWaitingForSession = false;
     this.fastDiscoveryStartTime = null;
     this.stopDiscoveryPolling();
@@ -403,6 +426,7 @@ export class SessionMonitor implements vscode.Disposable {
     this.currentContextSize = 0;
     this.recentUsageEvents = [];
     this.sessionStartTime = null;
+    this._subagentStats = [];
 
     // Reset statistics
     this.stats = {
@@ -530,6 +554,33 @@ export class SessionMonitor implements vscode.Disposable {
   }
 
   /**
+   * Gets subagent statistics from all subagent JSONL files.
+   *
+   * Scans the subagents directory for the current session and
+   * returns statistics for each subagent found.
+   *
+   * @returns Array of SubagentStats, empty if no subagents
+   */
+  getSubagentStats(): SubagentStats[] {
+    // Refresh subagent stats before returning
+    this.scanSubagents();
+    return [...this._subagentStats];
+  }
+
+  /**
+   * Scans subagent directory and updates cached stats.
+   */
+  private scanSubagents(): void {
+    if (!this.sessionPath || !this.sessionId) {
+      this._subagentStats = [];
+      return;
+    }
+
+    const sessionDir = path.dirname(this.sessionPath);
+    this._subagentStats = scanSubagentDir(sessionDir, this.sessionId);
+  }
+
+  /**
    * Gets all available sessions for the current workspace.
    *
    * Returns sessions sorted by modification time (most recent first).
@@ -589,6 +640,101 @@ export class SessionMonitor implements vscode.Disposable {
   }
 
   /**
+   * Starts monitoring with a custom session directory.
+   *
+   * This overrides the normal workspace-based session discovery and monitors
+   * sessions from a specific directory. The custom path is persisted across
+   * VS Code restarts.
+   *
+   * @param sessionDirectory - Path to the session directory to monitor
+   * @returns True if a session was found and monitoring started
+   */
+  async startWithCustomPath(sessionDirectory: string): Promise<boolean> {
+    if (!fs.existsSync(sessionDirectory)) {
+      logError(`Custom session directory not found: ${sessionDirectory}`);
+      return false;
+    }
+
+    log(`Starting with custom session directory: ${sessionDirectory}`);
+
+    // Save the custom path
+    this.customSessionDir = sessionDirectory;
+    await this.workspaceState?.update(CUSTOM_SESSION_PATH_KEY, sessionDirectory);
+
+    // Find sessions in the custom directory
+    const sessions = findSessionsInDirectory(sessionDirectory);
+    if (sessions.length === 0) {
+      log('No sessions found in custom directory');
+      this.isWaitingForSession = true;
+      this._onDiscoveryModeChange.fire(true);
+      return false;
+    }
+
+    // Attach to the most recent session
+    await this.attachToSession(sessions[0]);
+    return true;
+  }
+
+  /**
+   * Gets all sessions from a specific directory.
+   *
+   * Unlike getAvailableSessions which uses workspace-based discovery,
+   * this method accepts a direct path to a session directory.
+   *
+   * @param sessionDir - Path to the session directory
+   * @returns Array of session info objects
+   */
+  getSessionsFromDirectory(sessionDir: string): Array<{
+    path: string;
+    filename: string;
+    modifiedTime: Date;
+    isCurrent: boolean;
+  }> {
+    try {
+      const sessions = findSessionsInDirectory(sessionDir);
+      return sessions.map(sessionPath => {
+        const stats = fs.statSync(sessionPath);
+        return {
+          path: sessionPath,
+          filename: path.basename(sessionPath, '.jsonl'),
+          modifiedTime: stats.mtime,
+          isCurrent: sessionPath === this.sessionPath
+        };
+      });
+    } catch (error) {
+      logError('Error getting sessions from directory', error);
+      return [];
+    }
+  }
+
+  /**
+   * Clears the custom session path and reverts to workspace-based discovery.
+   */
+  async clearCustomPath(): Promise<void> {
+    log('Clearing custom session path');
+    this.customSessionDir = null;
+    await this.workspaceState?.update(CUSTOM_SESSION_PATH_KEY, undefined);
+  }
+
+  /**
+   * Gets the current custom session directory path, if set.
+   *
+   * @returns Custom session directory path, or null if using auto-detect
+   */
+  getCustomPath(): string | null {
+    return this.customSessionDir;
+  }
+
+  /**
+   * Returns whether the monitor is using a custom session path.
+   *
+   * @returns True if using custom path, false if using auto-detect
+   */
+  isUsingCustomPath(): boolean {
+    return this.customSessionDir !== null;
+  }
+
+  /**
    * Stops monitoring and cleans up resources.
    *
    * Closes file watcher, disposes event emitters, and resets state.
@@ -625,6 +771,7 @@ export class SessionMonitor implements vscode.Disposable {
 
     // Reset state
     this.sessionPath = null;
+    this.sessionId = null;
     this.workspacePath = null;
     this.filePosition = 0;
     this.parser.reset();
@@ -635,6 +782,7 @@ export class SessionMonitor implements vscode.Disposable {
     this.currentContextSize = 0;
     this.recentUsageEvents = [];
     this.sessionStartTime = null;
+    this._subagentStats = [];
     this.isWaitingForSession = false;
     this.fastDiscoveryStartTime = null;
 
@@ -1108,6 +1256,23 @@ export class SessionMonitor implements vscode.Disposable {
         return null;
       }
 
+      case 'assistant': {
+        // Extract assistant response text (skip if only tool_use blocks)
+        const responseText = this.extractAssistantResponseText(event);
+        if (responseText) {
+          return {
+            type: 'assistant_response',
+            timestamp: event.timestamp,
+            description: responseText.truncated,
+            metadata: {
+              model: event.message?.model,
+              fullText: responseText.full !== responseText.truncated ? responseText.full : undefined
+            }
+          };
+        }
+        return null;
+      }
+
       case 'tool_use':
         return {
           type: 'tool_call',
@@ -1168,6 +1333,45 @@ export class SessionMonitor implements vscode.Disposable {
     }
 
     return text;
+  }
+
+  /**
+   * Extracts assistant response text from an assistant event.
+   * Skips tool_use blocks (those are handled separately).
+   *
+   * @param event - Assistant event
+   * @returns Object with truncated and full text, or null if no text content
+   */
+  private extractAssistantResponseText(event: ClaudeSessionEvent): { truncated: string; full: string } | null {
+    const content = event.message?.content;
+    if (!content) return null;
+
+    const textParts: string[] = [];
+
+    if (typeof content === 'string') {
+      textParts.push(content);
+    } else if (Array.isArray(content)) {
+      // Extract only text blocks, skip tool_use blocks
+      for (const block of content) {
+        if (block && typeof block === 'object' && (block as any).type === 'text' && (block as any).text) {
+          textParts.push((block as any).text);
+        }
+      }
+    }
+
+    if (textParts.length === 0) return null;
+
+    // Join multiple text blocks with newlines
+    const fullText = textParts.join('\n').trim().replace(/\s+/g, ' ');
+    if (fullText.length === 0) return null;
+
+    // Truncate to 150 chars for display
+    let truncatedText = fullText;
+    if (fullText.length > 150) {
+      truncatedText = fullText.substring(0, 147) + '...';
+    }
+
+    return { truncated: truncatedText, full: fullText };
   }
 
   /**

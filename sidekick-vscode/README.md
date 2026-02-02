@@ -76,9 +76,11 @@ Monitor your Claude Code sessions in real-time with a comprehensive analytics da
 
 **Session Analytics Dashboard:**
 - Real-time token usage and cost tracking with model-specific pricing
+- Token usage tooltips and quota projections showing estimated usage at reset
 - Context window gauge showing input/output token usage vs. limits
 - Activity timeline displaying user prompts, tool calls, errors, and subagent spawns
 - Session selector dropdown to switch between active and recent sessions
+- **Browse Session Folders**: Manually select any Claude project folder to monitor, even from different directories
 - Tool analytics with categorization (file operations, search, bash commands, etc.)
 
 **Mind Map Visualization:**
@@ -94,7 +96,7 @@ Monitor your Claude Code sessions in real-time with a comprehensive analytics da
 - Real-time session indicator in the VS Code status bar
 - Quick access to dashboard and monitoring controls
 
-The monitor automatically discovers Claude Code sessions and updates in real-time. Perfect for understanding token usage, tracking costs, and seeing exactly what Claude is doing in your codebase.
+The monitor automatically discovers Claude Code sessions and updates in real-time. If Claude Code is running in a different directory than your workspace (e.g., a subdirectory), use **Browse Session Folders** to manually select the session folder. Your selection persists across VS Code restarts. Perfect for understanding token usage, tracking costs, and seeing exactly what Claude is doing in your codebase.
 
 ### Inline Completions
 
@@ -260,6 +262,8 @@ Speed read selected text with AI-powered explanations. [RSVP (Rapid Serial Visua
 | Sidekick: Start Session Monitoring | - | Begin monitoring Claude Code sessions |
 | Sidekick: Stop Session Monitoring | - | Stop monitoring Claude Code sessions |
 | Sidekick: Refresh/Find Session | - | Discover new Claude Code sessions |
+| Sidekick: Browse Session Folders... | - | Browse all Claude project folders to manually select a session |
+| Sidekick: Reset to Auto-Detect Session | - | Clear custom folder selection, revert to auto-detect |
 
 ### Status Bar Menu
 

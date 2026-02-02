@@ -36,6 +36,20 @@ export interface QuotaState {
   available: boolean;
   /** Error message if quota fetch failed */
   error?: string;
+  /** Projected 5-hour utilization at reset time (percentage) */
+  projectedFiveHour?: number;
+  /** Projected 7-day utilization at reset time (percentage) */
+  projectedSevenDay?: number;
+}
+
+/**
+ * A single utilization reading with timestamp.
+ */
+interface UtilizationReading {
+  /** Utilization percentage (0-100) */
+  utilization: number;
+  /** Unix timestamp in milliseconds */
+  timestamp: number;
 }
 
 /**
@@ -104,6 +118,15 @@ export class QuotaService implements vscode.Disposable {
 
   /** Beta header required for OAuth API */
   private readonly BETA_HEADER = 'oauth-2025-04-20';
+
+  /** History of 5-hour utilization readings for rate calculation */
+  private _fiveHourHistory: UtilizationReading[] = [];
+
+  /** History of 7-day utilization readings for rate calculation */
+  private _sevenDayHistory: UtilizationReading[] = [];
+
+  /** Maximum history entries to keep (10 readings = ~5 minutes at 30s intervals) */
+  private readonly MAX_HISTORY_SIZE = 10;
 
   /**
    * Event fired when quota is updated.
@@ -222,21 +245,46 @@ export class QuotaService implements vscode.Disposable {
 
       const data: UsageApiResponse = await response.json();
 
+      // Extract current utilization values
+      const fiveHourUtil = data.five_hour?.utilization ?? 0;
+      const sevenDayUtil = data.seven_day?.utilization ?? 0;
+
+      // Track history for rate calculation
+      this._addToHistory(this._fiveHourHistory, fiveHourUtil);
+      this._addToHistory(this._sevenDayHistory, sevenDayUtil);
+
+      // Calculate rates and projections
+      const fiveHourRate = this._calculateRate(this._fiveHourHistory);
+      const sevenDayRate = this._calculateRate(this._sevenDayHistory);
+
+      const projectedFiveHour = this._calculateProjection(
+        fiveHourUtil,
+        data.five_hour?.resets_at ?? '',
+        fiveHourRate
+      );
+      const projectedSevenDay = this._calculateProjection(
+        sevenDayUtil,
+        data.seven_day?.resets_at ?? '',
+        sevenDayRate
+      );
+
       const state: QuotaState = {
         fiveHour: {
-          utilization: data.five_hour?.utilization ?? 0,
+          utilization: fiveHourUtil,
           resetsAt: data.five_hour?.resets_at ?? ''
         },
         sevenDay: {
-          utilization: data.seven_day?.utilization ?? 0,
+          utilization: sevenDayUtil,
           resetsAt: data.seven_day?.resets_at ?? ''
         },
-        available: true
+        available: true,
+        projectedFiveHour,
+        projectedSevenDay
       };
 
       this._cachedQuota = state;
       this._onQuotaUpdate.fire(state);
-      log(`Quota fetched: 5h=${state.fiveHour.utilization.toFixed(1)}%, 7d=${state.sevenDay.utilization.toFixed(1)}%`);
+      log(`Quota fetched: 5h=${state.fiveHour.utilization.toFixed(1)}%${projectedFiveHour !== undefined ? ` (proj: ${projectedFiveHour.toFixed(0)}%)` : ''}, 7d=${state.sevenDay.utilization.toFixed(1)}%${projectedSevenDay !== undefined ? ` (proj: ${projectedSevenDay.toFixed(0)}%)` : ''}`);
 
       return state;
     } catch (error) {
@@ -260,6 +308,83 @@ export class QuotaService implements vscode.Disposable {
       this._onQuotaError.fire(errorMessage);
       return state;
     }
+  }
+
+  /**
+   * Adds a utilization reading to history and maintains max size.
+   * @param history - The history array to update
+   * @param utilization - Current utilization percentage
+   */
+  private _addToHistory(history: UtilizationReading[], utilization: number): void {
+    history.push({
+      utilization,
+      timestamp: Date.now()
+    });
+
+    // Keep only the most recent readings
+    while (history.length > this.MAX_HISTORY_SIZE) {
+      history.shift();
+    }
+  }
+
+  /**
+   * Calculates utilization rate from history (% per minute).
+   * @param history - The history array to analyze
+   * @returns Rate in % per minute, or null if insufficient data
+   */
+  private _calculateRate(history: UtilizationReading[]): number | null {
+    if (history.length < 2) {
+      return null;
+    }
+
+    const oldest = history[0];
+    const newest = history[history.length - 1];
+
+    const timeDiffMs = newest.timestamp - oldest.timestamp;
+    if (timeDiffMs < 30_000) {
+      // Need at least 30 seconds of data for meaningful rate
+      return null;
+    }
+
+    const utilizationDiff = newest.utilization - oldest.utilization;
+    if (utilizationDiff <= 0) {
+      // Rate is zero or negative (quota reset happened)
+      return 0;
+    }
+
+    // Convert to % per minute
+    const timeDiffMinutes = timeDiffMs / 60_000;
+    return utilizationDiff / timeDiffMinutes;
+  }
+
+  /**
+   * Calculates projected utilization at reset time.
+   * @param currentUtilization - Current utilization percentage
+   * @param resetsAt - ISO timestamp of reset time
+   * @param rate - Utilization rate in % per minute
+   * @returns Projected utilization at reset, or undefined if cannot project
+   */
+  private _calculateProjection(
+    currentUtilization: number,
+    resetsAt: string,
+    rate: number | null
+  ): number | undefined {
+    if (rate === null || rate <= 0 || !resetsAt) {
+      return undefined;
+    }
+
+    const resetTime = new Date(resetsAt).getTime();
+    const now = Date.now();
+    const timeToResetMs = resetTime - now;
+
+    if (timeToResetMs <= 0) {
+      return undefined;
+    }
+
+    const timeToResetMinutes = timeToResetMs / 60_000;
+    const projected = currentUtilization + (rate * timeToResetMinutes);
+
+    return Math.min(projected, 200); // Cap at 200% to avoid absurd numbers
   }
 
   /**

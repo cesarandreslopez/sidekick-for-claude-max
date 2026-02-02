@@ -75,6 +75,7 @@ Monitor your Claude Code sessions in real-time with a comprehensive analytics da
 ![Session Monitor demo](assets/session-monitor-demo.gif)
 
 - **Session Analytics Dashboard** - Track token usage, costs, and activity in real-time
+  - Token usage with explanatory tooltips and quota projections showing estimated usage at reset
   - Context window gauge showing input/output usage vs. limits
   - Activity timeline with user prompts, tool calls, and errors
   - Session selector to switch between active sessions

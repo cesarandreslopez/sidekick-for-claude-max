@@ -42,6 +42,12 @@ export interface GraphNode {
   /** Call count for tools, touch count for files */
   count?: number;
 
+  /** Number of lines added (for file nodes) */
+  additions?: number;
+
+  /** Number of lines deleted (for file nodes) */
+  deletions?: number;
+
   // D3 simulation properties (added during simulation)
   x?: number;
   y?: number;
@@ -66,6 +72,9 @@ export interface GraphLink {
 
   /** Link strength (optional, affects force simulation) */
   strength?: number;
+
+  /** Marks most recent file/URL operation */
+  isLatest?: boolean;
 }
 
 /**

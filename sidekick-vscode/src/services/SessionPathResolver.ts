@@ -444,6 +444,192 @@ export interface SessionDiagnostics {
  * @param workspacePath - Absolute path to workspace directory
  * @returns Diagnostic information
  */
+/**
+ * Information about a Claude project folder.
+ */
+export interface ProjectFolderInfo {
+  /** Full path to session directory */
+  path: string;
+  /** Directory name (encoded) */
+  encodedName: string;
+  /** Human-readable decoded path */
+  decodedPath: string;
+  /** Number of .jsonl session files */
+  sessionCount: number;
+  /** Most recent session modification time */
+  lastModified: Date;
+}
+
+/**
+ * Decodes an encoded directory name back to a human-readable path.
+ *
+ * Claude Code encodes paths by replacing slashes, colons, and underscores with hyphens.
+ * This function attempts to reverse that encoding. Note that some ambiguity exists
+ * (e.g., was it a slash or underscore?), so we default to slashes for path separators.
+ *
+ * @param encoded - Encoded directory name (e.g., "-home-user-project")
+ * @returns Decoded path (e.g., "/home/user/project")
+ *
+ * @example
+ * ```typescript
+ * decodeEncodedPath('-home-user-code-project');
+ * // => "/home/user/code/project"
+ *
+ * decodeEncodedPath('C--Users-user-code');
+ * // => "C:/Users/user/code"
+ * ```
+ */
+export function decodeEncodedPath(encoded: string): string {
+  // Handle Windows paths (start with drive letter like "C-")
+  const windowsDriveMatch = encoded.match(/^([A-Za-z])--(.*)/);
+  if (windowsDriveMatch) {
+    const drive = windowsDriveMatch[1];
+    const rest = windowsDriveMatch[2];
+    // Replace single hyphens with slashes (path separators)
+    const decoded = rest.replace(/-/g, '/');
+    return `${drive}:/${decoded}`;
+  }
+
+  // Handle Unix paths (start with hyphen representing root /)
+  if (encoded.startsWith('-')) {
+    // Remove leading hyphen, replace remaining hyphens with slashes
+    return '/' + encoded.substring(1).replace(/-/g, '/');
+  }
+
+  // Fallback: just replace hyphens with slashes
+  return encoded.replace(/-/g, '/');
+}
+
+/**
+ * Gets all project folders from ~/.claude/projects/.
+ *
+ * Returns information about every project directory Claude Code has created,
+ * sorted by most recently active (based on session file modification times).
+ *
+ * @returns Array of project folder info, sorted by most recent activity
+ *
+ * @example
+ * ```typescript
+ * const folders = getAllProjectFolders();
+ * // => [
+ * //   { path: '/home/user/.claude/projects/-home-user-project',
+ * //     encodedName: '-home-user-project',
+ * //     decodedPath: '/home/user/project',
+ * //     sessionCount: 3,
+ * //     lastModified: Date },
+ * //   ...
+ * // ]
+ * ```
+ */
+export function getAllProjectFolders(): ProjectFolderInfo[] {
+  const projectsDir = path.join(os.homedir(), '.claude', 'projects');
+  const folders: ProjectFolderInfo[] = [];
+
+  try {
+    if (!fs.existsSync(projectsDir)) {
+      return [];
+    }
+
+    const entries = fs.readdirSync(projectsDir);
+
+    for (const entry of entries) {
+      const fullPath = path.join(projectsDir, entry);
+
+      try {
+        const stats = fs.statSync(fullPath);
+        if (!stats.isDirectory()) {
+          continue;
+        }
+
+        // Count session files and find most recent modification
+        const sessionFiles = fs.readdirSync(fullPath)
+          .filter(f => f.endsWith('.jsonl'));
+
+        let lastModified = stats.mtime;
+        let sessionCount = 0;
+
+        for (const sessionFile of sessionFiles) {
+          try {
+            const sessionPath = path.join(fullPath, sessionFile);
+            const sessionStats = fs.statSync(sessionPath);
+            if (sessionStats.size > 0) {
+              sessionCount++;
+              if (sessionStats.mtime > lastModified) {
+                lastModified = sessionStats.mtime;
+              }
+            }
+          } catch {
+            // Skip files we can't stat
+          }
+        }
+
+        folders.push({
+          path: fullPath,
+          encodedName: entry,
+          decodedPath: decodeEncodedPath(entry),
+          sessionCount,
+          lastModified
+        });
+      } catch {
+        // Skip directories we can't read
+      }
+    }
+
+    // Sort by most recently active first
+    folders.sort((a, b) => b.lastModified.getTime() - a.lastModified.getTime());
+
+    return folders;
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Finds all session files in a specific directory.
+ *
+ * Unlike findAllSessions which uses workspace-based discovery, this function
+ * accepts a direct path to a session directory and returns all .jsonl files.
+ *
+ * @param sessionDir - Absolute path to a session directory
+ * @returns Array of session file paths, sorted by modification time (most recent first)
+ *
+ * @example
+ * ```typescript
+ * findSessionsInDirectory('/home/user/.claude/projects/-home-user-project');
+ * // => ['/home/user/.claude/projects/-home-user-project/abc123.jsonl', ...]
+ * ```
+ */
+export function findSessionsInDirectory(sessionDir: string): string[] {
+  try {
+    if (!fs.existsSync(sessionDir)) {
+      return [];
+    }
+
+    const files = fs.readdirSync(sessionDir)
+      .filter(file => file.endsWith('.jsonl'))
+      .map(file => {
+        const fullPath = path.join(sessionDir, file);
+        try {
+          const stats = fs.statSync(fullPath);
+          return {
+            path: fullPath,
+            mtime: stats.mtime.getTime(),
+            size: stats.size
+          };
+        } catch {
+          return null;
+        }
+      })
+      .filter((f): f is { path: string; mtime: number; size: number } => f !== null && f.size > 0)
+      .sort((a, b) => b.mtime - a.mtime)
+      .map(f => f.path);
+
+    return files;
+  } catch {
+    return [];
+  }
+}
+
 export function getSessionDiagnostics(workspacePath: string): SessionDiagnostics {
   const encodedPath = encodeWorkspacePath(workspacePath);
   const expectedSessionDir = getSessionDirectory(workspacePath);
