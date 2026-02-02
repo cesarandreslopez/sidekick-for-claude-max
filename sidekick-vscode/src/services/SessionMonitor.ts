@@ -270,7 +270,8 @@ export class SessionMonitor implements vscode.Disposable {
    * Creates the watcher even if no session exists yet.
    */
   private async setupDirectoryWatcher(): Promise<void> {
-    if (!this.workspacePath) {
+    // Need either customSessionDir or workspacePath
+    if (!this.customSessionDir && !this.workspacePath) {
       return;
     }
 
@@ -280,8 +281,13 @@ export class SessionMonitor implements vscode.Disposable {
       this.watcher = undefined;
     }
 
-    // Use discovery to find the actual session directory (handles subdirectory sessions)
-    const sessionDir = discoverSessionDirectory(this.workspacePath) || getSessionDirectory(this.workspacePath);
+    // Use custom directory if set, otherwise discover from workspace
+    let sessionDir: string;
+    if (this.customSessionDir) {
+      sessionDir = this.customSessionDir;
+    } else {
+      sessionDir = discoverSessionDirectory(this.workspacePath!) || getSessionDirectory(this.workspacePath!);
+    }
 
     // Create directory if it doesn't exist (Claude Code will create it anyway)
     try {
@@ -376,12 +382,19 @@ export class SessionMonitor implements vscode.Disposable {
    * Called periodically when no active session.
    */
   private performSessionDiscovery(): void {
-    if (!this.workspacePath) {
+    // Need either customSessionDir or workspacePath
+    if (!this.customSessionDir && !this.workspacePath) {
       return;
     }
 
-    // Use discovery to find session directory (handles subdirectory sessions)
-    const sessionDir = discoverSessionDirectory(this.workspacePath) || getSessionDirectory(this.workspacePath);
+    // Use custom directory if set, otherwise discover from workspace
+    let sessionDir: string;
+    if (this.customSessionDir) {
+      sessionDir = this.customSessionDir;
+    } else {
+      sessionDir = discoverSessionDirectory(this.workspacePath!) || getSessionDirectory(this.workspacePath!);
+    }
+
     if (!fs.existsSync(sessionDir)) {
       return; // Still waiting for Claude Code to create directory
     }
@@ -391,8 +404,17 @@ export class SessionMonitor implements vscode.Disposable {
       this.setupDirectoryWatcher();
     }
 
-    // Look for active session
-    const newSessionPath = findActiveSession(this.workspacePath);
+    // Look for active session using appropriate discovery method
+    let newSessionPath: string | null = null;
+    if (this.customSessionDir) {
+      // For custom directory, use direct directory scan
+      const sessions = findSessionsInDirectory(this.customSessionDir);
+      newSessionPath = sessions.length > 0 ? sessions[0] : null;
+    } else {
+      // For workspace-based, use standard discovery
+      newSessionPath = findActiveSession(this.workspacePath!);
+    }
+
     if (newSessionPath) {
       log(`Discovery found new session: ${newSessionPath}`);
       this.attachToSession(newSessionPath);
@@ -595,12 +617,20 @@ export class SessionMonitor implements vscode.Disposable {
     modifiedTime: Date;
     isCurrent: boolean;
   }> {
-    if (!this.workspacePath) {
+    // Use custom directory if set, otherwise workspace path
+    if (!this.customSessionDir && !this.workspacePath) {
       return [];
     }
 
     try {
-      const sessions = findAllSessions(this.workspacePath);
+      // Get sessions from appropriate directory
+      let sessions: string[];
+      if (this.customSessionDir) {
+        sessions = findSessionsInDirectory(this.customSessionDir);
+      } else {
+        sessions = findAllSessions(this.workspacePath!);
+      }
+
       return sessions.map(sessionPath => {
         const stats = fs.statSync(sessionPath);
         return {
@@ -661,12 +691,17 @@ export class SessionMonitor implements vscode.Disposable {
     this.customSessionDir = sessionDirectory;
     await this.workspaceState?.update(CUSTOM_SESSION_PATH_KEY, sessionDirectory);
 
+    // Set up directory watcher for the custom directory
+    await this.setupDirectoryWatcher();
+
     // Find sessions in the custom directory
     const sessions = findSessionsInDirectory(sessionDirectory);
     if (sessions.length === 0) {
-      log('No sessions found in custom directory');
+      log('No sessions found in custom directory, entering discovery mode');
       this.isWaitingForSession = true;
       this._onDiscoveryModeChange.fire(true);
+      // Start polling to detect new sessions
+      this.startDiscoveryPolling();
       return false;
     }
 

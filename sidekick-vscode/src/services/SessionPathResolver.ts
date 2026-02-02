@@ -504,24 +504,30 @@ export function decodeEncodedPath(encoded: string): string {
  * Gets all project folders from ~/.claude/projects/.
  *
  * Returns information about every project directory Claude Code has created,
- * sorted by most recently active (based on session file modification times).
+ * sorted by priority:
+ * 1. Exact workspace match (if workspacePath provided)
+ * 2. Subdirectories of workspace (if workspacePath provided)
+ * 3. Most recently active (based on session file modification times)
  *
- * @returns Array of project folder info, sorted by most recent activity
+ * @param workspacePath - Optional workspace path to prioritize in sorting
+ * @returns Array of project folder info, sorted by priority
  *
  * @example
  * ```typescript
- * const folders = getAllProjectFolders();
+ * const folders = getAllProjectFolders('/home/user/project');
  * // => [
- * //   { path: '/home/user/.claude/projects/-home-user-project',
+ * //   { path: '/home/user/.claude/projects/-home-user-project',  // exact match first
  * //     encodedName: '-home-user-project',
  * //     decodedPath: '/home/user/project',
  * //     sessionCount: 3,
  * //     lastModified: Date },
- * //   ...
+ * //   { path: '/home/user/.claude/projects/-home-user-project-subdir',  // subdirs next
+ * //     ... },
+ * //   ...  // then others by recency
  * // ]
  * ```
  */
-export function getAllProjectFolders(): ProjectFolderInfo[] {
+export function getAllProjectFolders(workspacePath?: string): ProjectFolderInfo[] {
   const projectsDir = path.join(os.homedir(), '.claude', 'projects');
   const folders: ProjectFolderInfo[] = [];
 
@@ -575,8 +581,30 @@ export function getAllProjectFolders(): ProjectFolderInfo[] {
       }
     }
 
-    // Sort by most recently active first
-    folders.sort((a, b) => b.lastModified.getTime() - a.lastModified.getTime());
+    // Sort with workspace prioritization
+    folders.sort((a, b) => {
+      if (workspacePath) {
+        // Normalize for comparison (handle Windows paths)
+        const normalizedWorkspace = workspacePath.replace(/\\/g, '/').toLowerCase();
+        const aDecoded = a.decodedPath.toLowerCase();
+        const bDecoded = b.decodedPath.toLowerCase();
+
+        // Priority 1: Exact workspace match comes first
+        const aIsExact = aDecoded === normalizedWorkspace;
+        const bIsExact = bDecoded === normalizedWorkspace;
+        if (aIsExact && !bIsExact) return -1;
+        if (!aIsExact && bIsExact) return 1;
+
+        // Priority 2: Subdirectories of workspace come next
+        const aIsSubdir = aDecoded.startsWith(normalizedWorkspace + '/');
+        const bIsSubdir = bDecoded.startsWith(normalizedWorkspace + '/');
+        if (aIsSubdir && !bIsSubdir) return -1;
+        if (!aIsSubdir && bIsSubdir) return 1;
+      }
+
+      // Default: sort by most recently active
+      return b.lastModified.getTime() - a.lastModified.getTime();
+    });
 
     return folders;
   } catch {

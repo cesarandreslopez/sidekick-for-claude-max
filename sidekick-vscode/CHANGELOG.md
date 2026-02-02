@@ -5,6 +5,32 @@ All notable changes to the Sidekick for Max VS Code extension will be documented
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.8] - 2026-02-02
+
+### Added
+- **Mind Map: Directory & Command Nodes**: Grep/Glob and Bash tool calls now show their targets in the mind map
+  - Directory nodes (brown) show paths searched by Grep/Glob tools
+  - Command nodes (red) show command types executed by Bash (git, npm, docker, etc.)
+  - Tooltips display detailed context:
+    - Directory nodes show search patterns used (e.g., `*.ts`, `TODO`)
+    - Command nodes show actual commands executed (e.g., `npm install`, `git status`)
+  - Node sizes scale with usage frequency
+- **Mind Map: Auto-Focus on Activity**: Mind map automatically pans to show new activity
+  - Focuses on newly added nodes or the latest tool-to-file/URL connection
+  - Preserves user's zoom level while adjusting pan position
+  - Smooth easing animation for comfortable viewing
+
+### Fixed
+- **Custom folder new session detection**: Browsing to a custom folder now properly detects new sessions when Claude Code starts
+  - Previously, discovery polling used the workspace path instead of the custom directory
+  - Now correctly watches and polls the custom directory for new sessions
+  - Entering discovery mode (waiting for session) works correctly with custom paths
+- **Folder picker prioritization**: The "Browse Session Folders" list now prioritizes the current VS Code workspace
+  - Exact workspace match appears first
+  - Subdirectories of the workspace appear next
+  - Other folders sorted by most recent activity
+- **Session dropdown custom folder**: Session dropdown now correctly shows sessions from the selected custom folder instead of the workspace folder
+
 ## [0.7.7] - 2026-02-02
 
 ### Added

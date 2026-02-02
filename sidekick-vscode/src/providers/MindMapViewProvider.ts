@@ -496,6 +496,14 @@ export class MindMapViewProvider implements vscode.WebviewViewProvider, vscode.D
       <span class="legend-dot" style="background: #BD10E0;"></span>
       <span>Subagent</span>
     </div>
+    <div class="legend-item">
+      <span class="legend-dot" style="background: #8B572A;"></span>
+      <span>Directory</span>
+    </div>
+    <div class="legend-item">
+      <span class="legend-dot" style="background: #D0021B;"></span>
+      <span>Command</span>
+    </div>
   </div>
 
   <script nonce="${nonce}" src="https://cdn.jsdelivr.net/npm/d3@7"></script>
@@ -510,17 +518,21 @@ export class MindMapViewProvider implements vscode.WebviewViewProvider, vscode.D
         tool: '#7ED321',
         todo: '#F5A623',
         subagent: '#BD10E0',
-        url: '#50E3C2'
+        url: '#50E3C2',
+        directory: '#8B572A',  // Brown - represents folders
+        command: '#D0021B'     // Red - represents terminal commands
       };
 
       // Sizing configuration for dynamic node sizes
       const SIZING_CONFIG = {
-        session:  { base: 16, min: 16, max: 16, scale: 0 },     // Fixed
-        file:     { base: 8,  min: 6,  max: 18, scale: 3 },     // Scales with touches
-        tool:     { base: 6,  min: 5,  max: 16, scale: 2.5 },   // Scales with calls
-        todo:     { base: 6,  min: 6,  max: 6,  scale: 0 },     // Fixed
-        subagent: { base: 8,  min: 6,  max: 14, scale: 2 },     // Scales with events
-        url:      { base: 7,  min: 5,  max: 14, scale: 2 }      // Scales with accesses
+        session:   { base: 16, min: 16, max: 16, scale: 0 },     // Fixed
+        file:      { base: 8,  min: 6,  max: 18, scale: 3 },     // Scales with touches
+        tool:      { base: 6,  min: 5,  max: 16, scale: 2.5 },   // Scales with calls
+        todo:      { base: 6,  min: 6,  max: 6,  scale: 0 },     // Fixed
+        subagent:  { base: 8,  min: 6,  max: 14, scale: 2 },     // Scales with events
+        url:       { base: 7,  min: 5,  max: 14, scale: 2 },     // Scales with accesses
+        directory: { base: 7,  min: 5,  max: 14, scale: 2 },     // Scales with searches
+        command:   { base: 7,  min: 5,  max: 14, scale: 2 }      // Scales with executions
       };
 
       function calculateNodeSize(d) {
@@ -538,9 +550,12 @@ export class MindMapViewProvider implements vscode.WebviewViewProvider, vscode.D
       const tooltipEl = document.getElementById('tooltip');
 
       // D3 elements
-      let svg, g, simulation, linkGroup, nodeGroup, labelGroup, changeGroup;
+      let svg, g, simulation, linkGroup, nodeGroup, labelGroup, changeGroup, zoom;
       let currentNodes = [];
       let currentLinks = [];
+      let previousNodeIds = new Set();
+      let previousLinkIds = new Set();
+      let previousLatestLinkId = null;
 
       /**
        * Initializes the D3 force simulation.
@@ -557,7 +572,7 @@ export class MindMapViewProvider implements vscode.WebviewViewProvider, vscode.D
         g = svg.append('g');
 
         // Zoom behavior
-        const zoom = d3.zoom()
+        zoom = d3.zoom()
           .scaleExtent([0.1, 10])
           .on('zoom', (event) => {
             g.attr('transform', event.transform);
@@ -790,6 +805,97 @@ export class MindMapViewProvider implements vscode.WebviewViewProvider, vscode.D
         simulation.nodes(nodes);
         simulation.force('link').links(links);
         simulation.alpha(0.3).restart();
+
+        // Check for new activity and focus on it
+        setTimeout(function() {
+          focusOnNewActivity(nodes, links);
+        }, 400);
+      }
+
+      /**
+       * Focuses the view on new activity (new nodes, new links, or latest link).
+       */
+      function focusOnNewActivity(nodes, links) {
+        if (!svg || !zoom) return;
+
+        // Build current IDs
+        var currentNodeIds = new Set(nodes.map(function(n) { return n.id; }));
+        var currentLinkIds = new Set(links.map(function(l) {
+          var sourceId = l.source.id || l.source;
+          var targetId = l.target.id || l.target;
+          return sourceId + '-' + targetId;
+        }));
+
+        // Find new nodes (excluding session root which is always present)
+        var newNodes = nodes.filter(function(n) {
+          return !previousNodeIds.has(n.id) && n.type !== 'session';
+        });
+
+        // Find new links
+        var newLinkIds = [];
+        currentLinkIds.forEach(function(id) {
+          if (!previousLinkIds.has(id)) newLinkIds.push(id);
+        });
+
+        // Find latest link
+        var latestLink = links.find(function(l) { return l.isLatest; });
+        var latestLinkId = null;
+        if (latestLink) {
+          var sourceId = latestLink.source.id || latestLink.source;
+          var targetId = latestLink.target.id || latestLink.target;
+          latestLinkId = sourceId + '-' + targetId;
+        }
+
+        // Determine if we should focus
+        var hasNewActivity = newNodes.length > 0 || newLinkIds.length > 0;
+        var latestLinkChanged = latestLinkId && latestLinkId !== previousLatestLinkId;
+
+        // Update tracking for next time
+        previousNodeIds = currentNodeIds;
+        previousLinkIds = currentLinkIds;
+        previousLatestLinkId = latestLinkId;
+
+        // Only focus if there's new activity or the latest link changed
+        if (!hasNewActivity && !latestLinkChanged) return;
+
+        // Determine focus target
+        var focusX, focusY;
+
+        if (latestLink && latestLinkChanged) {
+          // Focus on latest link (midpoint)
+          var source = typeof latestLink.source === 'object' ? latestLink.source : nodes.find(function(n) { return n.id === latestLink.source; });
+          var target = typeof latestLink.target === 'object' ? latestLink.target : nodes.find(function(n) { return n.id === latestLink.target; });
+          if (source && target && source.x != null && target.x != null) {
+            focusX = (source.x + target.x) / 2;
+            focusY = (source.y + target.y) / 2;
+          }
+        } else if (newNodes.length > 0) {
+          // Focus on newest node (last in array, typically most recent)
+          var newestNode = newNodes[newNodes.length - 1];
+          if (newestNode.x != null) {
+            focusX = newestNode.x;
+            focusY = newestNode.y;
+          }
+        }
+
+        if (focusX == null || focusY == null) return;
+
+        // Get viewport dimensions and current zoom state
+        var width = svg.node().clientWidth;
+        var height = svg.node().clientHeight;
+        var currentTransform = d3.zoomTransform(svg.node());
+
+        // Preserve user's zoom level, only change pan position
+        var scale = currentTransform.k;
+        var transform = d3.zoomIdentity
+          .translate(width / 2 - focusX * scale, height / 2 - focusY * scale)
+          .scale(scale);
+
+        // Progressive transition with easing
+        svg.transition()
+          .duration(800)
+          .ease(d3.easeCubicInOut)
+          .call(zoom.transform, transform);
       }
 
       /**

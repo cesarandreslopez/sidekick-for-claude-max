@@ -17,8 +17,10 @@
  * - subagent: Subagent/sidechain events
  * - session: Central session node (hub)
  * - url: URLs accessed by WebFetch or search queries from WebSearch
+ * - directory: Directories searched by Grep/Glob tools
+ * - command: Command types executed by Bash (git, npm, etc.)
  */
-export type NodeType = 'file' | 'tool' | 'todo' | 'subagent' | 'session' | 'url';
+export type NodeType = 'file' | 'tool' | 'todo' | 'subagent' | 'session' | 'url' | 'directory' | 'command';
 
 /**
  * Graph node for D3.js force simulation.

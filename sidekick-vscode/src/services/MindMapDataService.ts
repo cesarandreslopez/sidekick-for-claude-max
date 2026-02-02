@@ -29,6 +29,15 @@ export class MindMapDataService {
   /** URL-based tools */
   private static readonly URL_TOOLS = ['WebFetch', 'WebSearch'];
 
+  /** Search tools that operate on directories */
+  private static readonly SEARCH_TOOLS = ['Grep', 'Glob'];
+
+  /** Shell command tools */
+  private static readonly SHELL_TOOLS = ['Bash'];
+
+  /** Common command names to extract from bash commands */
+  private static readonly COMMAND_PATTERNS = /^(git|npm|npx|yarn|pnpm|node|python|pip|docker|make|cargo|go|rustc|tsc|eslint|prettier|vitest|jest|pytest)/i;
+
   /**
    * Builds complete graph from session statistics.
    *
@@ -108,6 +117,51 @@ export class MindMapDataService {
       }
     });
 
+    // Add directory nodes (linked to Grep/Glob tools)
+    const directories = this.extractDirectories(stats.toolCalls);
+    directories.forEach((dirStats, dirPath) => {
+      const id = `directory-${dirPath}`;
+      if (!nodeIds.has(id)) {
+        // Build tooltip showing path and patterns searched
+        let tooltip = dirPath;
+        if (dirStats.patterns.length > 0) {
+          tooltip += '\n\nPatterns:\n• ' + dirStats.patterns.slice(0, 5).join('\n• ');
+          if (dirStats.patterns.length > 5) {
+            tooltip += `\n• ... and ${dirStats.patterns.length - 5} more`;
+          }
+        }
+        nodes.push({
+          id,
+          label: this.getDirLabel(dirPath),
+          fullPath: tooltip,
+          type: 'directory',
+          count: dirStats.count,
+        });
+        nodeIds.add(id);
+      }
+    });
+
+    // Add command nodes (linked to Bash tool)
+    const commands = this.extractCommands(stats.toolCalls);
+    commands.forEach((cmdStats, cmdName) => {
+      const id = `command-${cmdName}`;
+      if (!nodeIds.has(id)) {
+        // Build tooltip showing command examples
+        let tooltip = cmdName;
+        if (cmdStats.examples.length > 0) {
+          tooltip += '\n\nCommands:\n• ' + cmdStats.examples.join('\n• ');
+        }
+        nodes.push({
+          id,
+          label: cmdName,
+          fullPath: tooltip,
+          type: 'command',
+          count: cmdStats.count,
+        });
+        nodeIds.add(id);
+      }
+    });
+
     // Add tool nodes with call counts
     stats.toolAnalytics.forEach((analytics, toolName) => {
       const id = `tool-${toolName}`;
@@ -166,6 +220,12 @@ export class MindMapDataService {
 
     // Create URL-to-tool links
     this.addUrlToolLinks(stats.toolCalls, nodeIds, links);
+
+    // Create directory-to-tool links
+    this.addDirectoryToolLinks(stats.toolCalls, nodeIds, links);
+
+    // Create command-to-tool links
+    this.addCommandToolLinks(stats.toolCalls, nodeIds, links);
 
     // Mark the latest file/URL link based on last tool call
     const lastFileUrlCall = [...stats.toolCalls]
@@ -240,6 +300,82 @@ export class MindMapDataService {
     }
 
     return urls;
+  }
+
+  /**
+   * Extracts directories from Grep/Glob tool calls with search details.
+   *
+   * @param toolCalls - Array of tool calls from session
+   * @returns Map of directory paths to search stats (count and patterns used)
+   */
+  private static extractDirectories(toolCalls: ToolCall[]): Map<string, { count: number; patterns: string[] }> {
+    const dirs = new Map<string, { count: number; patterns: string[] }>();
+
+    for (const call of toolCalls) {
+      if (this.SEARCH_TOOLS.includes(call.name)) {
+        const path = call.input.path as string;
+        if (path && typeof path === 'string') {
+          const existing = dirs.get(path) || { count: 0, patterns: [] };
+          existing.count += 1;
+
+          // Capture the search pattern (Grep uses 'pattern', Glob uses 'pattern')
+          const pattern = call.input.pattern as string;
+          if (pattern && !existing.patterns.includes(pattern)) {
+            existing.patterns.push(pattern);
+          }
+
+          dirs.set(path, existing);
+        }
+      }
+    }
+
+    return dirs;
+  }
+
+  /**
+   * Extracts command names from Bash tool calls with execution details.
+   *
+   * @param toolCalls - Array of tool calls from session
+   * @returns Map of command names to execution stats (count and example commands)
+   */
+  private static extractCommands(toolCalls: ToolCall[]): Map<string, { count: number; examples: string[] }> {
+    const commands = new Map<string, { count: number; examples: string[] }>();
+
+    for (const call of toolCalls) {
+      if (this.SHELL_TOOLS.includes(call.name)) {
+        const cmd = call.input.command as string;
+        if (cmd && typeof cmd === 'string') {
+          const match = cmd.match(this.COMMAND_PATTERNS);
+          if (match) {
+            const cmdName = match[1].toLowerCase();
+            const existing = commands.get(cmdName) || { count: 0, examples: [] };
+            existing.count += 1;
+
+            // Capture unique command examples (truncated for display)
+            const shortCmd = this.truncateLabel(cmd.split('\n')[0], 60);
+            if (!existing.examples.includes(shortCmd) && existing.examples.length < 5) {
+              existing.examples.push(shortCmd);
+            }
+
+            commands.set(cmdName, existing);
+          }
+        }
+      }
+    }
+
+    return commands;
+  }
+
+  /**
+   * Extracts display label from directory path.
+   *
+   * @param dirPath - Full directory path
+   * @returns Last directory component or '.' for current dir
+   */
+  private static getDirLabel(dirPath: string): string {
+    if (!dirPath || dirPath === '.') return '.';
+    const parts = dirPath.replace(/\/+$/, '').split('/');
+    return parts[parts.length - 1] || dirPath;
   }
 
   /**
@@ -351,6 +487,76 @@ export class MindMapDataService {
             if (!addedLinks.has(linkKey)) {
               links.push({ source: toolId, target: urlId });
               addedLinks.add(linkKey);
+            }
+          }
+        }
+      }
+    }
+  }
+
+  /**
+   * Creates links between directories and the tools that searched them.
+   *
+   * @param toolCalls - Array of tool calls from session
+   * @param existingNodeIds - Set of existing node IDs
+   * @param links - Links array to add to
+   */
+  private static addDirectoryToolLinks(
+    toolCalls: ToolCall[],
+    existingNodeIds: Set<string>,
+    links: GraphLink[]
+  ): void {
+    const addedLinks = new Set<string>();
+
+    for (const call of toolCalls) {
+      if (this.SEARCH_TOOLS.includes(call.name)) {
+        const path = call.input.path as string;
+        if (path && typeof path === 'string') {
+          const dirId = `directory-${path}`;
+          const toolId = `tool-${call.name}`;
+
+          if (existingNodeIds.has(dirId) && existingNodeIds.has(toolId)) {
+            const linkKey = `${toolId}-${dirId}`;
+            if (!addedLinks.has(linkKey)) {
+              links.push({ source: toolId, target: dirId });
+              addedLinks.add(linkKey);
+            }
+          }
+        }
+      }
+    }
+  }
+
+  /**
+   * Creates links between command types and the Bash tool that ran them.
+   *
+   * @param toolCalls - Array of tool calls from session
+   * @param existingNodeIds - Set of existing node IDs
+   * @param links - Links array to add to
+   */
+  private static addCommandToolLinks(
+    toolCalls: ToolCall[],
+    existingNodeIds: Set<string>,
+    links: GraphLink[]
+  ): void {
+    const addedLinks = new Set<string>();
+
+    for (const call of toolCalls) {
+      if (this.SHELL_TOOLS.includes(call.name)) {
+        const cmd = call.input.command as string;
+        if (cmd && typeof cmd === 'string') {
+          const match = cmd.match(this.COMMAND_PATTERNS);
+          if (match) {
+            const cmdName = match[1].toLowerCase();
+            const cmdId = `command-${cmdName}`;
+            const toolId = `tool-${call.name}`;
+
+            if (existingNodeIds.has(cmdId) && existingNodeIds.has(toolId)) {
+              const linkKey = `${toolId}-${cmdId}`;
+              if (!addedLinks.has(linkKey)) {
+                links.push({ source: toolId, target: cmdId });
+                addedLinks.add(linkKey);
+              }
             }
           }
         }

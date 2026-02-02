@@ -62,12 +62,15 @@ export class SessionFolderPicker {
    * Shows a quick pick of all Claude project folders.
    *
    * Displays folders from ~/.claude/projects/ with decoded human-readable paths,
-   * session counts, and last activity times.
+   * session counts, and last activity times. Prioritizes the current workspace
+   * and its subdirectories at the top of the list.
    *
    * @returns Selected folder path, or undefined if cancelled
    */
   async showFolderPicker(): Promise<string | undefined> {
-    const folders = getAllProjectFolders();
+    // Pass workspace path for prioritized sorting
+    const workspacePath = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    const folders = getAllProjectFolders(workspacePath);
 
     if (folders.length === 0) {
       vscode.window.showInformationMessage(
