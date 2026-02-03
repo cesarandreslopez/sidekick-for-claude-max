@@ -15,16 +15,19 @@
  */
 
 import * as vscode from 'vscode';
+import * as fs from 'fs';
+import * as path from 'path';
 import type { SessionMonitor } from '../services/SessionMonitor';
 import type { QuotaService } from '../services/QuotaService';
 import type { HistoricalDataService } from '../services/HistoricalDataService';
-import type { QuotaState as DashboardQuotaState, HistoricalSummary, HistoricalDataPoint, LatencyDisplay } from '../types/dashboard';
+import type { ClaudeMdAdvisor } from '../services/ClaudeMdAdvisor';
+import type { QuotaState as DashboardQuotaState, HistoricalSummary, HistoricalDataPoint, LatencyDisplay, ClaudeMdSuggestionDisplay } from '../types/dashboard';
 import type { TokenUsage, SessionStats, ToolAnalytics, TimelineEvent, ToolCall, LatencyStats } from '../types/claudeSession';
 import type { DashboardMessage, WebviewMessage, DashboardState } from '../types/dashboard';
 import { ModelPricingService } from '../services/ModelPricingService';
 import { calculateLineChanges } from '../utils/lineChangeCalculator';
 import { BurnRateCalculator } from '../services/BurnRateCalculator';
-import { log } from '../services/Logger';
+import { log, logError } from '../services/Logger';
 
 /**
  * WebviewViewProvider for the session analytics dashboard.
@@ -81,6 +84,9 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
   /** Current drill-down level for historical data */
   private _drillDownStack: Array<{ range: string; timestamp: string }> = [];
 
+  /** ClaudeMdAdvisor for generating CLAUDE.md suggestions */
+  private _claudeMdAdvisor?: ClaudeMdAdvisor;
+
   /**
    * Creates a new DashboardViewProvider.
    *
@@ -88,15 +94,18 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
    * @param _sessionMonitor - SessionMonitor instance for token events
    * @param quotaService - Optional QuotaService for subscription quota
    * @param historicalDataService - Optional HistoricalDataService for long-term analytics
+   * @param claudeMdAdvisor - Optional ClaudeMdAdvisor for generating suggestions
    */
   constructor(
     private readonly _extensionUri: vscode.Uri,
     private readonly _sessionMonitor: SessionMonitor,
     quotaService?: QuotaService,
-    historicalDataService?: HistoricalDataService
+    historicalDataService?: HistoricalDataService,
+    claudeMdAdvisor?: ClaudeMdAdvisor
   ) {
     this._quotaService = quotaService;
     this._historicalDataService = historicalDataService;
+    this._claudeMdAdvisor = claudeMdAdvisor;
     // Initialize empty state
     this._state = {
       totalInputTokens: 0,
@@ -223,6 +232,7 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
    * @param message - Message from webview
    */
   private _handleWebviewMessage(message: WebviewMessage): void {
+    log(`Dashboard: received message from webview: ${message.type}`);
     switch (message.type) {
       case 'webviewReady':
         log('Dashboard webview ready, sending initial state');
@@ -289,7 +299,129 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
           }
         }
         break;
+
+      case 'analyzeSession':
+        this._handleAnalyzeSession().catch(err => {
+          logError('Dashboard: Unhandled error in _handleAnalyzeSession', err);
+        });
+        break;
+
+      case 'copySuggestion':
+        this._handleCopySuggestion(message.text);
+        break;
+
+      case 'openClaudeMd':
+        this._handleOpenClaudeMd();
+        break;
     }
+  }
+
+  /**
+   * Handles the analyze session request from webview.
+   * Calls ClaudeMdAdvisor and sends results to webview.
+   * Shows a progress notification to set latency expectations.
+   */
+  private async _handleAnalyzeSession(): Promise<void> {
+    log('Dashboard: _handleAnalyzeSession called');
+    if (!this._claudeMdAdvisor) {
+      log('Dashboard: _claudeMdAdvisor is not available');
+      this._postMessage({
+        type: 'suggestionsError',
+        error: 'CLAUDE.md analysis is not available. Please check extension configuration.'
+      });
+      return;
+    }
+
+    log('Dashboard: Starting session analysis');
+    log(`Dashboard: _view exists: ${!!this._view}`);
+    this._postMessage({ type: 'suggestionsLoading', loading: true });
+
+    try {
+      // Show progress notification with latency expectation
+      await vscode.window.withProgress(
+        {
+          location: vscode.ProgressLocation.Notification,
+          title: 'Analyzing session for CLAUDE.md suggestions',
+          cancellable: false,
+        },
+        async (progress) => {
+          progress.report({ message: 'This may take 30-60 seconds...' });
+
+          const result = await this._claudeMdAdvisor!.analyze();
+
+          if (result.success) {
+            const suggestions: ClaudeMdSuggestionDisplay[] = result.suggestions.map(s => ({
+              title: s.title,
+              observed: s.observed,
+              suggestion: s.suggestion,
+              reasoning: s.reasoning
+            }));
+            this._postMessage({ type: 'showSuggestions', suggestions });
+            log(`Dashboard: Analysis complete, ${suggestions.length} suggestions`);
+          } else {
+            this._postMessage({
+              type: 'suggestionsError',
+              error: result.error || 'Analysis failed'
+            });
+            logError(`Dashboard: Analysis failed: ${result.error}`);
+          }
+        }
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      this._postMessage({
+        type: 'suggestionsError',
+        error: `Analysis failed: ${message}`
+      });
+      logError('Dashboard: Analysis error', error);
+    } finally {
+      this._postMessage({ type: 'suggestionsLoading', loading: false });
+    }
+  }
+
+  /**
+   * Handles copying suggestion text to clipboard.
+   */
+  private async _handleCopySuggestion(text: string): Promise<void> {
+    await vscode.env.clipboard.writeText(text);
+    vscode.window.showInformationMessage('Suggestion copied to clipboard');
+  }
+
+  /**
+   * Handles opening the project's CLAUDE.md file.
+   */
+  private async _handleOpenClaudeMd(): Promise<void> {
+    const claudeMdPath = await this._findProjectClaudeMd();
+    if (claudeMdPath) {
+      const doc = await vscode.workspace.openTextDocument(claudeMdPath);
+      await vscode.window.showTextDocument(doc);
+    } else {
+      vscode.window.showInformationMessage(
+        'No CLAUDE.md found. Run /init in Claude Code to create one, or create it manually in your project root.'
+      );
+    }
+  }
+
+  /**
+   * Finds the CLAUDE.md file for the current workspace.
+   *
+   * @returns Path to CLAUDE.md if found, undefined otherwise
+   */
+  private async _findProjectClaudeMd(): Promise<string | undefined> {
+    const workspaceFolders = vscode.workspace.workspaceFolders;
+    if (!workspaceFolders || workspaceFolders.length === 0) {
+      return undefined;
+    }
+
+    // Check each workspace folder for CLAUDE.md
+    for (const folder of workspaceFolders) {
+      const claudeMdPath = path.join(folder.uri.fsPath, 'CLAUDE.md');
+      if (fs.existsSync(claudeMdPath)) {
+        return claudeMdPath;
+      }
+    }
+
+    return undefined;
   }
 
   /**
@@ -2124,6 +2256,251 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
     .custom-path-indicator .reset-link:hover {
       text-decoration: underline;
     }
+
+    /* CLAUDE.md Suggestions Panel */
+    .suggestions-section {
+      margin-top: 16px;
+      padding-top: 16px;
+      border-top: 1px solid var(--vscode-panel-border);
+    }
+
+    .suggestions-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      cursor: pointer;
+      padding: 4px 0;
+    }
+
+    .suggestions-header:hover {
+      opacity: 0.8;
+    }
+
+    .suggestions-header-left {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .suggestions-toggle-icon {
+      font-size: 10px;
+      transition: transform 0.2s;
+      color: var(--vscode-foreground);
+      opacity: 0.7;
+    }
+
+    .suggestions-section.expanded .suggestions-toggle-icon {
+      transform: rotate(90deg);
+    }
+
+    .suggestions-header h3 {
+      font-size: 13px;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin: 0;
+    }
+
+    .suggestions-header h3::before {
+      content: '💡';
+      font-size: 14px;
+    }
+
+    .suggestions-body {
+      display: none;
+      margin-top: 12px;
+    }
+
+    .suggestions-section.expanded .suggestions-body {
+      display: block;
+    }
+
+    #analyze-btn {
+      padding: 6px 12px;
+      font-size: 11px;
+      background: var(--vscode-button-secondaryBackground);
+      color: var(--vscode-button-secondaryForeground);
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+
+    #analyze-btn:hover:not(:disabled) {
+      background: var(--vscode-button-secondaryHoverBackground);
+    }
+
+    #analyze-btn:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+
+    .suggestions-content {
+      min-height: 60px;
+    }
+
+    .suggestions-loading,
+    .suggestions-empty,
+    .suggestions-error {
+      text-align: center;
+      padding: 16px;
+      color: var(--vscode-descriptionForeground);
+      font-size: 12px;
+    }
+
+    .suggestions-error {
+      color: var(--vscode-errorForeground);
+    }
+
+    .suggestion-card {
+      background: var(--vscode-input-background);
+      border: 1px solid var(--vscode-input-border);
+      border-radius: 6px;
+      padding: 12px;
+      margin-bottom: 10px;
+    }
+
+    .suggestion-card-consolidated {
+      border-color: var(--vscode-focusBorder);
+    }
+
+    .suggestion-header {
+      font-weight: 600;
+      font-size: 12px;
+      margin-bottom: 8px;
+      color: var(--vscode-foreground);
+    }
+
+    .suggestion-observed,
+    .suggestion-why,
+    .suggestion-summary {
+      font-size: 11px;
+      color: var(--vscode-descriptionForeground);
+      margin-bottom: 8px;
+    }
+
+    .suggestion-observed .label,
+    .suggestion-why .label,
+    .suggestion-summary .label,
+    .suggestion-rationale .label,
+    .suggestion-code-header {
+      font-weight: 600;
+      color: var(--vscode-foreground);
+    }
+
+    .suggestion-code-header {
+      font-size: 11px;
+      margin-bottom: 4px;
+    }
+
+    .suggestion-code {
+      background: var(--vscode-textBlockQuote-background);
+      border: 1px solid var(--vscode-textBlockQuote-border);
+      border-radius: 4px;
+      padding: 8px 10px;
+      font-family: var(--vscode-editor-font-family);
+      font-size: 11px;
+      white-space: pre-wrap;
+      word-break: break-word;
+      margin-bottom: 8px;
+      overflow-x: auto;
+    }
+
+    .suggestion-actions {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+
+    .suggestion-rationale {
+      font-size: 11px;
+      color: var(--vscode-descriptionForeground);
+      border-top: 1px solid var(--vscode-input-border);
+      padding-top: 10px;
+      margin-top: 4px;
+    }
+
+    .suggestion-rationale-list {
+      margin: 6px 0 0 0;
+      padding-left: 18px;
+    }
+
+    .suggestion-rationale-list li {
+      margin-bottom: 4px;
+    }
+
+    .copy-btn {
+      padding: 4px 10px;
+      font-size: 10px;
+      background: var(--vscode-button-secondaryBackground);
+      color: var(--vscode-button-secondaryForeground);
+      border: none;
+      border-radius: 3px;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+
+    .copy-btn:hover {
+      background: var(--vscode-button-secondaryHoverBackground);
+    }
+
+    .suggestions-footer {
+      margin-top: 20px;
+      padding-top: 16px;
+      text-align: center;
+      border-top: 1px solid var(--vscode-widget-border, rgba(255,255,255,0.1));
+    }
+
+    .open-claude-md-btn {
+      padding: 10px 20px;
+      font-size: 11px;
+      background: var(--vscode-button-background);
+      color: var(--vscode-button-foreground);
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+
+    .open-claude-md-btn:hover {
+      background: var(--vscode-button-hoverBackground);
+    }
+
+    .suggestions-intro {
+      font-size: 11px;
+      color: var(--vscode-descriptionForeground);
+      margin-bottom: 12px;
+      line-height: 1.5;
+    }
+
+    .suggestions-intro a {
+      color: var(--vscode-textLink-foreground);
+      text-decoration: none;
+    }
+
+    .suggestions-intro a:hover {
+      text-decoration: underline;
+    }
+
+    .suggestions-tip {
+      font-size: 11px;
+      color: var(--vscode-descriptionForeground);
+      margin-top: 12px;
+      padding: 8px 10px;
+      background: var(--vscode-textBlockQuote-background);
+      border-radius: 4px;
+      line-height: 1.5;
+    }
+
+    .suggestions-tip code {
+      background: var(--vscode-textCodeBlock-background);
+      padding: 1px 4px;
+      border-radius: 3px;
+      font-family: var(--vscode-editor-font-family);
+      font-size: 11px;
+      line-height: 1.4;
+    }
   </style>
 </head>
 <body>
@@ -2244,6 +2621,26 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
             <span class="latency-label">Total:</span>
             <span class="latency-value-secondary">avg <span id="latency-total-avg">-</span></span>
             <span class="latency-count">· <span id="latency-count">0</span> requests</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- CLAUDE.md Suggestions Panel -->
+      <div class="suggestions-section" id="suggestions-panel">
+        <div class="suggestions-header" id="suggestions-header">
+          <div class="suggestions-header-left">
+            <span class="suggestions-toggle-icon">▶</span>
+            <h3>Improve Agent Guidance</h3>
+          </div>
+          <button id="analyze-btn" title="Analyze your session patterns to generate suggestions for your CLAUDE.md file. Better guidance helps Claude work more efficiently on your project.">Get Suggestions</button>
+        </div>
+        <div class="suggestions-body">
+          <p class="suggestions-intro">
+            Analyze your session to get AI-powered suggestions for improving your CLAUDE.md file.
+            <a href="https://docs.anthropic.com/en/docs/claude-code/memory#claudemd" target="_blank">Best practices →</a>
+          </p>
+          <div class="suggestions-content">
+            <!-- Suggestions will be rendered here -->
           </div>
         </div>
       </div>
@@ -2461,6 +2858,132 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
         burnRate: 0,
         sessionDuration: '0m'
       };
+
+      // Suggestions state
+      let currentSuggestions = [];
+      let suggestionsLoading = false;
+
+      // ==== CLAUDE.md Suggestions Functions ====
+
+      function escapeHtml(text) {
+        var div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+      }
+
+      function setSuggestionsLoading(loading) {
+        suggestionsLoading = loading;
+        var panel = document.getElementById('suggestions-panel');
+        var analyzeBtn = document.getElementById('analyze-btn');
+
+        if (analyzeBtn) {
+          analyzeBtn.disabled = loading;
+          analyzeBtn.textContent = loading ? 'Analyzing...' : 'Get Suggestions';
+        }
+
+        if (panel && loading) {
+          var content = panel.querySelector('.suggestions-content');
+          if (content) {
+            content.innerHTML = '<div class="suggestions-loading">Analyzing session data...</div>';
+          }
+        }
+      }
+
+      function showSuggestionsError(error) {
+        var panel = document.getElementById('suggestions-panel');
+        if (!panel) return;
+
+        var content = panel.querySelector('.suggestions-content');
+        if (content) {
+          content.innerHTML = '<div class="suggestions-error">' + escapeHtml(error) + '</div>';
+        }
+      }
+
+      function renderSuggestions(suggestions) {
+        currentSuggestions = suggestions;
+        var panel = document.getElementById('suggestions-panel');
+        if (!panel) return;
+
+        var content = panel.querySelector('.suggestions-content');
+        if (!content) return;
+
+        if (suggestions.length === 0) {
+          content.innerHTML = '<div class="suggestions-empty">No suggestions generated. Try using Claude Code more before analyzing.</div>';
+          return;
+        }
+
+        // Handle single consolidated suggestion (new format) or multiple suggestions (old format)
+        var html;
+        if (suggestions.length === 1 && suggestions[0].title === 'Recommended Addition') {
+          // New consolidated format - single card with summary, code block, and rationale
+          var s = suggestions[0];
+          var rationaleItems = s.reasoning.split(' | ').filter(function(item) { return item.trim(); });
+          var rationaleHtml = rationaleItems.length > 0
+            ? '<ul class="suggestion-rationale-list">' +
+                rationaleItems.map(function(item) {
+                  return '<li>' + escapeHtml(item) + '</li>';
+                }).join('') +
+              '</ul>'
+            : '<p>' + escapeHtml(s.reasoning) + '</p>';
+
+          html = '<div class="suggestion-card suggestion-card-consolidated">' +
+            '<div class="suggestion-header">' + escapeHtml(s.title) + '</div>' +
+            '<div class="suggestion-summary"><span class="label">Summary:</span> ' + escapeHtml(s.observed) + '</div>' +
+            '<div class="suggestion-code-header">Append this to CLAUDE.md:</div>' +
+            '<pre class="suggestion-code">' + escapeHtml(s.suggestion) + '</pre>' +
+            '<div class="suggestion-actions">' +
+              '<button class="copy-btn" data-index="0">Copy to Clipboard</button>' +
+            '</div>' +
+            '<div class="suggestion-rationale">' +
+              '<div class="label">Rationale:</div>' +
+              rationaleHtml +
+            '</div>' +
+          '</div>';
+        } else {
+          // Legacy multi-suggestion format
+          html = suggestions.map(function(s, i) {
+            return '<div class="suggestion-card">' +
+              '<div class="suggestion-header">' + (i + 1) + '. ' + escapeHtml(s.title) + '</div>' +
+              '<div class="suggestion-observed"><span class="label">Observed:</span> ' + escapeHtml(s.observed) + '</div>' +
+              '<pre class="suggestion-code">' + escapeHtml(s.suggestion) + '</pre>' +
+              '<div class="suggestion-why"><span class="label">Why:</span> ' + escapeHtml(s.reasoning) + '</div>' +
+              '<div class="suggestion-actions">' +
+                '<button class="copy-btn" data-index="' + i + '">Copy</button>' +
+              '</div>' +
+            '</div>';
+          }).join('');
+        }
+
+        content.innerHTML = html +
+          '<div class="suggestions-footer">' +
+            '<button class="open-claude-md-btn">Open CLAUDE.md</button>' +
+          '</div>' +
+          '<div class="suggestions-tip">' +
+            '<strong>💡 Tip:</strong> After adding suggestions to your CLAUDE.md, run <code>/init</code> in Claude Code to consolidate and optimize the file.' +
+          '</div>';
+
+        // Attach event listeners (CSP blocks inline onclick)
+        content.querySelectorAll('.copy-btn').forEach(function(btn) {
+          btn.addEventListener('click', function() {
+            var index = parseInt(btn.getAttribute('data-index'), 10);
+            if (index >= 0 && index < currentSuggestions.length) {
+              vscode.postMessage({
+                type: 'copySuggestion',
+                text: currentSuggestions[index].suggestion
+              });
+            }
+          });
+        });
+
+        var openBtn = content.querySelector('.open-claude-md-btn');
+        if (openBtn) {
+          openBtn.addEventListener('click', function() {
+            vscode.postMessage({ type: 'openClaudeMd' });
+          });
+        }
+      }
+
+      // ==== End Suggestions Functions ====
 
       // Tab switching
       tabBtns.forEach(function(btn) {
@@ -3388,6 +3911,18 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
           case 'updateLatency':
             updateLatency(message.latency);
             break;
+
+          case 'showSuggestions':
+            renderSuggestions(message.suggestions);
+            break;
+
+          case 'suggestionsLoading':
+            setSuggestionsLoading(message.loading);
+            break;
+
+          case 'suggestionsError':
+            showSuggestionsError(message.error);
+            break;
         }
       });
 
@@ -3431,6 +3966,33 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
       initContextGauge();
       initQuotaGauges();
       initHistoryChart();
+
+      // Set up event listeners for CLAUDE.md suggestions (CSP blocks inline onclick)
+      var suggestionsPanel = document.getElementById('suggestions-panel');
+      var suggestionsHeader = document.getElementById('suggestions-header');
+      var analyzeBtn = document.getElementById('analyze-btn');
+
+      if (suggestionsHeader && suggestionsPanel) {
+        suggestionsHeader.addEventListener('click', function(e) {
+          // Don't toggle if clicking the analyze button
+          if (e.target === analyzeBtn || analyzeBtn.contains(e.target)) {
+            return;
+          }
+          suggestionsPanel.classList.toggle('expanded');
+        });
+      }
+
+      if (analyzeBtn) {
+        analyzeBtn.addEventListener('click', function(e) {
+          e.stopPropagation(); // Prevent header toggle
+          // Auto-expand when analyzing
+          if (suggestionsPanel) {
+            suggestionsPanel.classList.add('expanded');
+          }
+          vscode.postMessage({ type: 'analyzeSession' });
+        });
+      }
+
       vscode.postMessage({ type: 'webviewReady' });
     })();
   </script>

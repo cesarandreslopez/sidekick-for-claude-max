@@ -78,6 +78,16 @@ interface LatencyDisplay {
 }
 
 /**
+ * CLAUDE.md suggestion from extension.
+ */
+interface ClaudeMdSuggestion {
+  title: string;
+  observed: string;
+  suggestion: string;
+  reasoning: string;
+}
+
+/**
  * Dashboard state received from extension.
  */
 interface DashboardState {
@@ -101,6 +111,9 @@ let contextChart: ChartInstance | null = null;
 // Session timer state
 let sessionStartTime: Date | null = null;
 let sessionTimerInterval: number | null = null;
+
+// CLAUDE.md suggestions state
+let currentSuggestions: ClaudeMdSuggestion[] = [];
 
 // Color thresholds for context gauge
 const GAUGE_COLORS = {
@@ -452,6 +465,123 @@ function updateDisplay(state: DashboardState): void {
   updateLastUpdated(state.lastUpdated);
 }
 
+// ============================================================================
+// CLAUDE.md Suggestions UI
+// ============================================================================
+
+/**
+ * Escapes HTML special characters to prevent XSS.
+ */
+function escapeHtml(text: string): string {
+  const div = document.createElement('div');
+  div.textContent = text;
+  return div.innerHTML;
+}
+
+/**
+ * Requests session analysis from the extension.
+ */
+function requestAnalysis(): void {
+  vscode.postMessage({ type: 'analyzeSession' });
+}
+
+/**
+ * Copies a suggestion to clipboard.
+ * @param index - Index of suggestion in currentSuggestions array
+ */
+function copySuggestion(index: number): void {
+  if (index >= 0 && index < currentSuggestions.length) {
+    vscode.postMessage({
+      type: 'copySuggestion',
+      text: currentSuggestions[index].suggestion
+    });
+  }
+}
+
+/**
+ * Opens the project's CLAUDE.md file.
+ */
+function openClaudeMd(): void {
+  vscode.postMessage({ type: 'openClaudeMd' });
+}
+
+/**
+ * Sets loading state for suggestions panel.
+ */
+function setSuggestionsLoading(loading: boolean): void {
+  const panel = document.getElementById('suggestions-panel');
+  const analyzeBtn = document.getElementById('analyze-btn') as HTMLButtonElement | null;
+
+  if (analyzeBtn) {
+    analyzeBtn.disabled = loading;
+    analyzeBtn.textContent = loading ? 'Analyzing...' : 'Analyze Session';
+  }
+
+  if (panel && loading) {
+    const content = panel.querySelector('.suggestions-content');
+    if (content) {
+      content.innerHTML = '<div class="suggestions-loading">Analyzing session data...</div>';
+    }
+  }
+}
+
+/**
+ * Shows an error message in the suggestions panel.
+ */
+function showSuggestionsError(error: string): void {
+  const panel = document.getElementById('suggestions-panel');
+  if (!panel) return;
+
+  const content = panel.querySelector('.suggestions-content');
+  if (content) {
+    content.innerHTML = `<div class="suggestions-error">${escapeHtml(error)}</div>`;
+  }
+}
+
+/**
+ * Renders suggestions in the panel.
+ */
+function renderSuggestions(suggestions: ClaudeMdSuggestion[]): void {
+  currentSuggestions = suggestions;
+  const panel = document.getElementById('suggestions-panel');
+  if (!panel) return;
+
+  const content = panel.querySelector('.suggestions-content');
+  if (!content) return;
+
+  if (suggestions.length === 0) {
+    content.innerHTML = '<div class="suggestions-empty">No suggestions generated. Try using Claude Code more before analyzing.</div>';
+    return;
+  }
+
+  const html = suggestions.map((s, i) => `
+    <div class="suggestion-card">
+      <div class="suggestion-header">${i + 1}. ${escapeHtml(s.title)}</div>
+      <div class="suggestion-observed">
+        <span class="label">Observed:</span> ${escapeHtml(s.observed)}
+      </div>
+      <pre class="suggestion-code">${escapeHtml(s.suggestion)}</pre>
+      <div class="suggestion-why">
+        <span class="label">Why:</span> ${escapeHtml(s.reasoning)}
+      </div>
+      <div class="suggestion-actions">
+        <button class="copy-btn" onclick="copySuggestion(${i})">Copy</button>
+      </div>
+    </div>
+  `).join('');
+
+  content.innerHTML = html + `
+    <div class="suggestions-footer">
+      <button class="open-claude-md-btn" onclick="openClaudeMd()">Open CLAUDE.md</button>
+    </div>
+  `;
+}
+
+// Expose functions to window for onclick handlers
+(window as unknown as Record<string, unknown>).copySuggestion = copySuggestion;
+(window as unknown as Record<string, unknown>).openClaudeMd = openClaudeMd;
+(window as unknown as Record<string, unknown>).requestAnalysis = requestAnalysis;
+
 /**
  * Handles messages from the extension.
  */
@@ -479,6 +609,15 @@ function handleMessage(event: MessageEvent): void {
       break;
     case 'updateLatency':
       updateLatencyDisplay(message.latency);
+      break;
+    case 'showSuggestions':
+      renderSuggestions(message.suggestions);
+      break;
+    case 'suggestionsLoading':
+      setSuggestionsLoading(message.loading);
+      break;
+    case 'suggestionsError':
+      showSuggestionsError(message.error);
       break;
   }
 }

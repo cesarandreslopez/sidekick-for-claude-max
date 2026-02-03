@@ -23,7 +23,11 @@
 
 If you're already paying for Claude Max, Sidekick lets you use those tokens for inline completions, code transforms, AI commit messages, speed reading with AI explanations, and real-time session monitoring—no extra cost, no separate account.
 
-Let's consider the following: 
+## Why Am I Building This?
+
+Claude Code and other AI agents have transformed how we build software. But some of us are still **control freaks** who want to *see*, *review*, and *understand* everything that our overly-enthusiastic robot assistant does with our code. We also enjoy writing actual code ourselves sometimes. And since agents love to be verbose, we need to **ingest their output faster** (hence RSVP speed reading).
+
+Sidekick gives you visibility into what Claude is doing, quick AI assistance for the small stuff, and tools to read faster—all without leaving VS Code.
 
 ## Why Sidekick for Max?
 
@@ -86,6 +90,10 @@ Monitor your Claude Code sessions in real-time with a comprehensive analytics da
 - **Latest Files Touched** - Tree view of files modified during sessions
 - **Subagents Tree** - Monitor spawned Task agents during complex operations
 - **Status Bar Metrics** - Quick session status in the VS Code status bar
+- **CLAUDE.md Suggestions** - AI-powered analysis of your session patterns
+  - Detects recovery patterns (when Claude gets stuck and how it recovers)
+  - Generates best practices based on actual usage
+  - Collapsible suggestions panel with progress indicators
 
 The monitor automatically discovers Claude Code sessions and updates in real-time as Claude works. Perfect for understanding token usage and keeping an eye on costs.
 

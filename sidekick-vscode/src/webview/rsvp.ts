@@ -145,8 +145,8 @@ function setupEventListeners() {
   openExplainBtn?.addEventListener('click', openInExplainPanel);
 
   // Regenerate controls
-  const regenerateBtn = document.getElementById('regenerate-btn');
-  const regenerateInput = document.getElementById('regenerate-input') as HTMLInputElement;
+  const regenerateBtn = document.getElementById('regenerate-btn') as HTMLButtonElement | null;
+  const regenerateInput = document.getElementById('regenerate-input') as HTMLInputElement | null;
   regenerateBtn?.addEventListener('click', () => requestRegenerate());
   regenerateInput?.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') {
@@ -473,8 +473,8 @@ function updateUI() {
   const toggleContentBtn = document.getElementById('toggle-content-btn');
   const toggleModeBtn = document.getElementById('toggle-mode-btn');
   const regenerateSection = document.getElementById('regenerate-section');
-  const regenerateBtn = document.getElementById('regenerate-btn');
-  const regenerateInput = document.getElementById('regenerate-input') as HTMLInputElement;
+  const regenerateBtn = document.getElementById('regenerate-btn') as HTMLButtonElement | null;
+  const regenerateInput = document.getElementById('regenerate-input') as HTMLInputElement | null;
   const playingStopBtn = document.getElementById('playing-stop-btn');
 
   // Update button text

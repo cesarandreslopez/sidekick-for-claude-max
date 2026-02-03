@@ -320,6 +320,9 @@ export class MaxSubscriptionClient implements ClaudeClient {
           allowedTools: [],
           permissionMode: 'bypassPermissions',
           pathToClaudeCodeExecutable: claudePath,
+          // Disable session persistence to prevent SDK calls from creating JSONL files
+          // that would pollute SessionMonitor data (token counts, timeline, tool analytics)
+          persistSession: false,
         },
       })) {
         log(`Received message: type=${message.type}, subtype=${'subtype' in message ? message.subtype : 'n/a'}`);

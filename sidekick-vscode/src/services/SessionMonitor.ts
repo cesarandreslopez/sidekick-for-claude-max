@@ -1935,6 +1935,19 @@ export class SessionMonitor implements vscode.Disposable {
           const endTime = new Date(timestamp);
           const duration = endTime.getTime() - pending.startTime.getTime();
 
+          // Update the corresponding ToolCall with result data
+          const toolCall = this.stats.toolCalls.find(
+            tc => tc.timestamp.getTime() === pending.startTime.getTime() && tc.name === pending.name
+          );
+          if (toolCall) {
+            toolCall.isError = toolResult.is_error ?? false;
+            toolCall.duration = duration;
+            if (toolResult.is_error && toolResult.content) {
+              toolCall.errorMessage = this.extractErrorMessage(toolResult.content, pending.name);
+              toolCall.errorCategory = this.categorizeError(toolResult.content);
+            }
+          }
+
           // Update analytics
           const analytics = this.toolAnalyticsMap.get(pending.name);
           if (analytics) {

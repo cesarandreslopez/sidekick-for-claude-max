@@ -66,7 +66,10 @@ export type DashboardMessage =
   | { type: 'updateQuota'; quota: QuotaState }
   | { type: 'updateHistoricalData'; data: HistoricalSummary }
   | { type: 'historicalDataLoading'; loading: boolean }
-  | { type: 'updateLatency'; latency: LatencyDisplay };
+  | { type: 'updateLatency'; latency: LatencyDisplay }
+  | { type: 'showSuggestions'; suggestions: ClaudeMdSuggestionDisplay[] }
+  | { type: 'suggestionsLoading'; loading: boolean }
+  | { type: 'suggestionsError'; error: string };
 
 /**
  * Messages from webview to extension.
@@ -83,7 +86,10 @@ export type WebviewMessage =
   | { type: 'requestHistoricalData'; range: 'today' | 'week' | 'month' | 'all'; metric: string }
   | { type: 'drillDown'; timestamp: string; currentRange: string }
   | { type: 'drillUp' }
-  | { type: 'importHistoricalData' };
+  | { type: 'importHistoricalData' }
+  | { type: 'analyzeSession' }
+  | { type: 'copySuggestion'; text: string }
+  | { type: 'openClaudeMd' };
 
 /**
  * Model usage breakdown entry.
@@ -189,6 +195,26 @@ export interface HistoricalSummary {
     messageCount: number;
     sessionCount: number;
   };
+}
+
+/**
+ * CLAUDE.md suggestion formatted for display.
+ *
+ * Contains a single suggestion for improving CLAUDE.md based on
+ * session analysis.
+ */
+export interface ClaudeMdSuggestionDisplay {
+  /** Short descriptive title */
+  title: string;
+
+  /** What was observed in the session that led to this suggestion */
+  observed: string;
+
+  /** The exact text to add to CLAUDE.md */
+  suggestion: string;
+
+  /** Why this suggestion would help */
+  reasoning: string;
 }
 
 /**

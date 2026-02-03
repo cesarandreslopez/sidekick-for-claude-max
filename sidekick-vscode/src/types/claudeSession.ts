@@ -124,6 +124,15 @@ export interface ToolCall {
 
   /** How long the tool took to execute (milliseconds) */
   duration?: number;
+
+  /** True if this call failed (is_error from tool_result) */
+  isError?: boolean;
+
+  /** Truncated error message if the call failed */
+  errorMessage?: string;
+
+  /** Error category (permission, not_found, timeout, syntax, exit_code, tool_error, other) */
+  errorCategory?: string;
 }
 
 /**

@@ -342,7 +342,7 @@ const TRANSFORM_CONVERSATIONAL_PATTERNS = [
  * ```
  */
 export function getTransformSystemPrompt(): string {
-  return `You are a code transformation assistant. Transform the provided code according to the user's instruction.
+  return `You are a code transformation assistant. Transform the code in the <code> tags according to the instruction in <instruction> tags.
 
 RULES:
 - Output ONLY the transformed code
@@ -386,16 +386,16 @@ export function getTransformUserPrompt(
   let prompt = `Language: ${language}\n\n`;
 
   if (prefix) {
-    prompt += `Context before:\n${prefix}\n\n`;
+    prompt += `<context_before>\n${prefix}\n</context_before>\n\n`;
   }
 
-  prompt += `Code to transform:\n${code}\n\n`;
+  prompt += `<code>\n${code}\n</code>\n\n`;
 
   if (suffix) {
-    prompt += `Context after:\n${suffix}\n\n`;
+    prompt += `<context_after>\n${suffix}\n</context_after>\n\n`;
   }
 
-  prompt += `Instruction: ${instruction}\n\nTransformed code:`;
+  prompt += `<instruction>${instruction}</instruction>\n\nTransformed code:`;
 
   return prompt;
 }
@@ -505,14 +505,16 @@ export function getCommitMessageUserPrompt(diff: string, guidance?: string): str
 
   // Put guidance FIRST so it's not buried after a long diff
   if (guidance && guidance.trim()) {
-    prompt += `IMPORTANT - Follow this guidance when writing the commit message: ${guidance.trim()}
+    prompt += `<guidance>${guidance.trim()}</guidance>
 
 `;
   }
 
   prompt += `Generate a commit message for this diff:
 
+<diff>
 ${diff}
+</diff>
 
 COMMIT MESSAGE:`;
 
@@ -867,15 +869,15 @@ export function getInlineChatUserPrompt(
   let prompt = `Language: ${languageId}\n\n`;
 
   if (contextBefore.trim()) {
-    prompt += `Context before:\n\`\`\`${languageId}\n${contextBefore}\n\`\`\`\n\n`;
+    prompt += `<context_before language="${languageId}">\n${contextBefore}\n</context_before>\n\n`;
   }
 
   if (hasSelection) {
-    prompt += `Selected code:\n\`\`\`${languageId}\n${selectedText}\n\`\`\`\n\n`;
+    prompt += `<selection language="${languageId}">\n${selectedText}\n</selection>\n\n`;
   }
 
   if (contextAfter.trim()) {
-    prompt += `Context after:\n\`\`\`${languageId}\n${contextAfter}\n\`\`\`\n\n`;
+    prompt += `<context_after language="${languageId}">\n${contextAfter}\n</context_after>\n\n`;
   }
 
   prompt += `User request: ${query}`;
@@ -956,10 +958,9 @@ DO NOT FLAG:
 - Code that is correct but could be "more elegant"
 - Test files or test code
 
-DIFF TO REVIEW:
-\`\`\`diff
+<diff>
 ${diff}
-\`\`\`
+</diff>
 
 IMPORTANT:
 - Only report actual issues - be strict, avoid false positives
@@ -1039,13 +1040,13 @@ export function getPrDescriptionPrompt(commits: string[], diff: string): string 
 
   return `You are a technical writer creating a pull request description.
 
-COMMITS ON THIS BRANCH:
+<commits>
 ${commitList}
+</commits>
 
-DIFF SUMMARY (truncated):
-\`\`\`diff
+<diff>
 ${diff}
-\`\`\`
+</diff>
 
 Generate a GitHub-compatible PR description with these sections:
 

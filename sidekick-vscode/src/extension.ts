@@ -35,6 +35,8 @@ import { MonitorStatusBar } from './services/MonitorStatusBar';
 import { QuotaService } from './services/QuotaService';
 import { HistoricalDataService } from './services/HistoricalDataService';
 import { RetroactiveDataLoader } from './services/RetroactiveDataLoader';
+import { SessionAnalyzer } from './services/SessionAnalyzer';
+import { ClaudeMdAdvisor } from './services/ClaudeMdAdvisor';
 import { InlineCompletionProvider } from "./providers/InlineCompletionProvider";
 import { InlineChatProvider } from "./providers/InlineChatProvider";
 import { RsvpViewProvider } from "./providers/RsvpViewProvider";
@@ -306,8 +308,13 @@ export async function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(quotaService);
     log('QuotaService initialized');
 
-    // Register dashboard view provider (depends on sessionMonitor, quotaService, and historicalDataService)
-    dashboardProvider = new DashboardViewProvider(context.extensionUri, sessionMonitor, quotaService, historicalDataService);
+    // Create SessionAnalyzer and ClaudeMdAdvisor for CLAUDE.md suggestions
+    const sessionAnalyzer = new SessionAnalyzer(sessionMonitor);
+    const claudeMdAdvisor = new ClaudeMdAdvisor(authService, sessionAnalyzer);
+    log('SessionAnalyzer and ClaudeMdAdvisor initialized');
+
+    // Register dashboard view provider (depends on sessionMonitor, quotaService, historicalDataService, and claudeMdAdvisor)
+    dashboardProvider = new DashboardViewProvider(context.extensionUri, sessionMonitor, quotaService, historicalDataService, claudeMdAdvisor);
     context.subscriptions.push(dashboardProvider);
     context.subscriptions.push(
       vscode.window.registerWebviewViewProvider(DashboardViewProvider.viewType, dashboardProvider)
