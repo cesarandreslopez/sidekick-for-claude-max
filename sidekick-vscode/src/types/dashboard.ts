@@ -63,7 +63,10 @@ export type DashboardMessage =
   | { type: 'sessionEnd' }
   | { type: 'updateSessionList'; sessions: SessionInfo[]; isUsingCustomPath?: boolean; customPathDisplay?: string | null }
   | { type: 'discoveryModeChange'; inDiscoveryMode: boolean }
-  | { type: 'updateQuota'; quota: QuotaState };
+  | { type: 'updateQuota'; quota: QuotaState }
+  | { type: 'updateHistoricalData'; data: HistoricalSummary }
+  | { type: 'historicalDataLoading'; loading: boolean }
+  | { type: 'updateLatency'; latency: LatencyDisplay };
 
 /**
  * Messages from webview to extension.
@@ -76,7 +79,11 @@ export type WebviewMessage =
   | { type: 'selectSession'; sessionPath: string }
   | { type: 'refreshSessions' }
   | { type: 'browseSessionFolders' }
-  | { type: 'clearCustomPath' };
+  | { type: 'clearCustomPath' }
+  | { type: 'requestHistoricalData'; range: 'today' | 'week' | 'month' | 'all'; metric: string }
+  | { type: 'drillDown'; timestamp: string; currentRange: string }
+  | { type: 'drillUp' }
+  | { type: 'importHistoricalData' };
 
 /**
  * Model usage breakdown entry.
@@ -127,6 +134,86 @@ export interface TimelineEventDisplay {
   isError?: boolean;
   /** Full text for expandable content (when truncated) */
   fullText?: string;
+}
+
+/**
+ * Data point for historical time-series display.
+ */
+export interface HistoricalDataPoint {
+  /** Timestamp for this data point (ISO string or label like "2024-01-15") */
+  timestamp: string;
+
+  /** Display label for the x-axis */
+  label: string;
+
+  /** Input tokens for this period */
+  inputTokens: number;
+
+  /** Output tokens for this period */
+  outputTokens: number;
+
+  /** Cache write tokens for this period */
+  cacheWriteTokens: number;
+
+  /** Cache read tokens for this period */
+  cacheReadTokens: number;
+
+  /** Total estimated cost in USD */
+  totalCost: number;
+
+  /** Number of messages (API calls) */
+  messageCount: number;
+
+  /** Number of sessions in this period */
+  sessionCount: number;
+}
+
+/**
+ * Historical data summary for a time range.
+ */
+export interface HistoricalSummary {
+  /** Time range type */
+  range: 'today' | 'week' | 'month' | 'all';
+
+  /** Granularity of data points */
+  granularity: 'hourly' | 'daily' | 'monthly';
+
+  /** Data points for the range */
+  dataPoints: HistoricalDataPoint[];
+
+  /** Aggregated totals for the range */
+  totals: {
+    inputTokens: number;
+    outputTokens: number;
+    totalCost: number;
+    messageCount: number;
+    sessionCount: number;
+  };
+}
+
+/**
+ * Response latency metrics formatted for display.
+ *
+ * Human-readable latency values for the dashboard UI.
+ */
+export interface LatencyDisplay {
+  /** Average first token latency (e.g., "2.3s") */
+  avgFirstToken: string;
+
+  /** Maximum first token latency (e.g., "4.2s") */
+  maxFirstToken: string;
+
+  /** Most recent first token latency (e.g., "1.8s") */
+  lastFirstToken: string;
+
+  /** Average total response time (e.g., "5.1s") */
+  avgTotal: string;
+
+  /** Number of completed request-response cycles */
+  cycleCount: number;
+
+  /** Whether any latency data is available */
+  hasData: boolean;
 }
 
 /**
@@ -181,4 +268,7 @@ export interface DashboardState {
     /** Total lines deleted */
     totalDeletions: number;
   };
+
+  /** Response latency metrics for display */
+  latencyDisplay?: LatencyDisplay;
 }

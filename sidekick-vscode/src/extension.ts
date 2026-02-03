@@ -33,6 +33,8 @@ import { SessionMonitor } from './services/SessionMonitor';
 import { SessionFolderPicker } from './services/SessionFolderPicker';
 import { MonitorStatusBar } from './services/MonitorStatusBar';
 import { QuotaService } from './services/QuotaService';
+import { HistoricalDataService } from './services/HistoricalDataService';
+import { RetroactiveDataLoader } from './services/RetroactiveDataLoader';
 import { InlineCompletionProvider } from "./providers/InlineCompletionProvider";
 import { InlineChatProvider } from "./providers/InlineChatProvider";
 import { RsvpViewProvider } from "./providers/RsvpViewProvider";
@@ -98,6 +100,9 @@ let dashboardProvider: DashboardViewProvider | undefined;
 
 /** Quota service for Claude Max subscription limits */
 let quotaService: QuotaService | undefined;
+
+/** Historical data service for long-term analytics */
+let historicalDataService: HistoricalDataService | undefined;
 
 /**
  * Activates the extension.
@@ -219,13 +224,90 @@ export async function activate(context: vscode.ExtensionContext) {
       log(`Token usage: ${usage.inputTokens} in, ${usage.outputTokens} out, model: ${usage.model}`);
     });
 
+    // Initialize historical data service for long-term analytics
+    historicalDataService = new HistoricalDataService();
+    historicalDataService.initialize().then(async () => {
+      log('HistoricalDataService initialized');
+
+      // Auto-import historical data on first activation (if no historical data exists)
+      const allTimeStats = historicalDataService!.getAllTimeStats();
+      if (allTimeStats.sessionCount === 0) {
+        log('No historical data found, triggering auto-import');
+        vscode.commands.executeCommand('sidekick.importHistoricalData');
+      }
+    }).catch(error => {
+      logError('Failed to initialize HistoricalDataService', error);
+    });
+    context.subscriptions.push(historicalDataService);
+
+    // Register import historical data command
+    context.subscriptions.push(
+      vscode.commands.registerCommand('sidekick.importHistoricalData', async () => {
+        if (!historicalDataService) {
+          vscode.window.showErrorMessage('Historical data service not initialized');
+          return;
+        }
+
+        const loader = new RetroactiveDataLoader(historicalDataService);
+
+        await vscode.window.withProgress(
+          {
+            location: vscode.ProgressLocation.Notification,
+            title: 'Importing historical Claude Code data...',
+            cancellable: false
+          },
+          async (progress) => {
+            let lastPercent = 0;
+            const result = await loader.loadHistoricalData((loaded, total) => {
+              const percent = Math.round((loaded / total) * 100);
+              const increment = percent - lastPercent;
+              lastPercent = percent;
+              if (increment > 0) {
+                progress.report({
+                  increment,
+                  message: `${loaded}/${total} session files`
+                });
+              }
+            });
+
+            if (result.sessionsCreated > 0) {
+              vscode.window.showInformationMessage(
+                `Imported ${result.recordsImported.toLocaleString()} records from ${result.sessionsCreated} sessions`
+              );
+              // Notify dashboard to refresh
+              dashboardProvider?.refresh();
+            } else if (result.filesSkipped > 0 && result.filesProcessed === 0) {
+              vscode.window.showInformationMessage(
+                'All historical data already imported'
+              );
+            } else {
+              vscode.window.showInformationMessage(
+                'No historical session data found'
+              );
+            }
+
+            log(`Import complete: ${result.filesProcessed} files, ${result.recordsImported} records, ${result.sessionsCreated} sessions, ${result.filesSkipped} skipped`);
+          }
+        );
+      })
+    );
+
+    // Save session summary to historical data when session ends
+    sessionMonitor.onSessionEnd(() => {
+      const summary = sessionMonitor?.getSessionSummary();
+      if (summary && historicalDataService) {
+        historicalDataService.saveSessionSummary(summary);
+        log(`Session summary saved for ${summary.sessionId.slice(0, 8)}`);
+      }
+    });
+
     // Create quota service for subscription limits
     quotaService = new QuotaService();
     context.subscriptions.push(quotaService);
     log('QuotaService initialized');
 
-    // Register dashboard view provider (depends on sessionMonitor and quotaService)
-    dashboardProvider = new DashboardViewProvider(context.extensionUri, sessionMonitor, quotaService);
+    // Register dashboard view provider (depends on sessionMonitor, quotaService, and historicalDataService)
+    dashboardProvider = new DashboardViewProvider(context.extensionUri, sessionMonitor, quotaService, historicalDataService);
     context.subscriptions.push(dashboardProvider);
     context.subscriptions.push(
       vscode.window.registerWebviewViewProvider(DashboardViewProvider.viewType, dashboardProvider)

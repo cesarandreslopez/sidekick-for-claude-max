@@ -5,6 +5,22 @@ All notable changes to the Sidekick for Max VS Code extension will be documented
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.10] - 2026-02-03
+
+### Added
+- **Historical Analytics**: Retroactive data import from existing Claude Code sessions
+  - Import token usage, costs, and tool statistics from completed sessions
+  - Enables trend analysis across multiple sessions
+- **Response Latency Tracking**: Real-time latency metrics in dashboard
+  - Track request-to-response timing for Claude API calls
+  - Visualize latency trends over the session
+- **Task Nodes in Mind Map**: Task tool calls visualized as distinct nodes
+  - Spawned Task agents appear as nodes with their descriptions
+  - Shows task type and status in the mind map
+- **Dashboard UX**: Improved metric button layout and sizing
+  - Better visual hierarchy for metric controls
+  - More consistent button sizing across the dashboard
+
 ## [0.7.9] - 2026-02-02
 
 ### Fixed

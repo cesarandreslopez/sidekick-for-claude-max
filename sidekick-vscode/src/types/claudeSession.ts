@@ -194,6 +194,62 @@ export interface PendingToolCall {
 }
 
 /**
+ * Task status values matching Claude Code's task management.
+ */
+export type TaskStatus = 'pending' | 'in_progress' | 'completed' | 'deleted';
+
+/**
+ * Tracked task from TaskCreate/TaskUpdate/TaskGet/TaskList tools.
+ *
+ * Represents a task in the session's task list, tracking its lifecycle
+ * and associated tool calls made while the task was in progress.
+ */
+export interface TrackedTask {
+  /** Unique task identifier assigned by Claude Code */
+  taskId: string;
+
+  /** Brief task title (from TaskCreate subject) */
+  subject: string;
+
+  /** Detailed task description */
+  description?: string;
+
+  /** Current task status */
+  status: TaskStatus;
+
+  /** When the task was created */
+  createdAt: Date;
+
+  /** When the task was last updated */
+  updatedAt: Date;
+
+  /** Present continuous form shown while task is in_progress */
+  activeForm?: string;
+
+  /** Task IDs that this task is blocked by */
+  blockedBy: string[];
+
+  /** Task IDs that this task blocks */
+  blocks: string[];
+
+  /** Tool calls made while this task was in_progress */
+  associatedToolCalls: ToolCall[];
+}
+
+/**
+ * Task state tracking for a session or subagent.
+ *
+ * Maintains the collection of tasks and tracks which task is currently active.
+ */
+export interface TaskState {
+  /** Map of task IDs to tracked tasks */
+  tasks: Map<string, TrackedTask>;
+
+  /** Currently active task ID (most recently set to in_progress) */
+  activeTaskId: string | null;
+}
+
+/**
  * Statistics for a subagent spawned via the Task tool.
  *
  * Tracks subagent identity and its tool calls for mind map visualization.
@@ -210,6 +266,70 @@ export interface SubagentStats {
 
   /** All tool calls made by this subagent */
   toolCalls: ToolCall[];
+
+  /** Task state for this subagent */
+  taskState?: TaskState;
+}
+
+/**
+ * Pending user request awaiting assistant response.
+ *
+ * Tracks timing from when a user prompt is sent until the first
+ * assistant response with content is received.
+ */
+export interface PendingUserRequest {
+  /** Timestamp when the user request was sent */
+  timestamp: Date;
+
+  /** Whether the first response has been received */
+  firstResponseReceived: boolean;
+
+  /** Timestamp when the first response was received */
+  firstResponseTimestamp?: Date;
+
+  /** Time to first token in milliseconds */
+  firstTokenLatencyMs?: number;
+}
+
+/**
+ * Response latency for a single request-response cycle.
+ *
+ * Captures timing data for a complete user prompt → assistant response cycle.
+ */
+export interface ResponseLatency {
+  /** Time to first token in milliseconds */
+  firstTokenLatencyMs: number;
+
+  /** Total time from request to final response in milliseconds */
+  totalResponseTimeMs: number;
+
+  /** Timestamp when the user request was sent */
+  requestTimestamp: Date;
+}
+
+/**
+ * Aggregated latency statistics.
+ *
+ * Provides summary metrics for response latency across the session.
+ */
+export interface LatencyStats {
+  /** Recent latency measurements (capped at 100) */
+  recentLatencies: ResponseLatency[];
+
+  /** Average first token latency in milliseconds */
+  avgFirstTokenLatencyMs: number;
+
+  /** Maximum first token latency in milliseconds */
+  maxFirstTokenLatencyMs: number;
+
+  /** Average total response time in milliseconds */
+  avgTotalResponseTimeMs: number;
+
+  /** Most recent first token latency in milliseconds */
+  lastFirstTokenLatencyMs: number | null;
+
+  /** Number of completed request-response cycles */
+  completedCycles: number;
 }
 
 /**
@@ -260,4 +380,10 @@ export interface SessionStats {
 
   /** When the session started (first event timestamp) */
   sessionStartTime: Date | null;
+
+  /** Task tracking state for the session */
+  taskState?: TaskState;
+
+  /** Response latency statistics */
+  latencyStats?: LatencyStats;
 }

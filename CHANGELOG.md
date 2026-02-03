@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [0.7.10] - 2026-02-03
+
+### Added
+- **Historical Analytics**: Retroactive data import from existing Claude Code sessions
+- **Response Latency Tracking**: Real-time latency metrics in dashboard
+- **Task Nodes in Mind Map**: Task tool calls visualized as distinct nodes
+- **Dashboard UX**: Improved metric button layout and sizing
+
 ## [0.7.9] - 2026-02-02
 
 ### Fixed

@@ -7,8 +7,8 @@
  * @module services/MindMapDataService
  */
 
-import { SessionStats, ToolCall, TimelineEvent, SubagentStats } from '../types/claudeSession';
-import { GraphNode, GraphLink, GraphData } from '../types/mindMap';
+import { SessionStats, ToolCall, TimelineEvent, SubagentStats, TaskState, TrackedTask } from '../types/claudeSession';
+import { GraphNode, GraphLink, GraphData, TaskNodeStatus } from '../types/mindMap';
 import { calculateLineChanges } from '../utils/lineChangeCalculator';
 import { log } from './Logger';
 
@@ -37,6 +37,9 @@ export class MindMapDataService {
 
   /** Common command names to extract from bash commands */
   private static readonly COMMAND_PATTERNS = /^(git|npm|npx|yarn|pnpm|node|python|pip|docker|make|cargo|go|rustc|tsc|eslint|prettier|vitest|jest|pytest)/i;
+
+  /** Task-related tools (not visualized as separate nodes) */
+  private static readonly TASK_TOOLS = ['TaskCreate', 'TaskUpdate', 'TaskGet', 'TaskList'];
 
   /**
    * Builds complete graph from session statistics.
@@ -190,6 +193,11 @@ export class MindMapDataService {
       nodeIds.add(id);
       links.push({ source: 'session-root', target: id });
     });
+
+    // Add task nodes from taskState
+    if (stats.taskState) {
+      this.addTaskNodes(stats.taskState, nodes, links, nodeIds);
+    }
 
     // Add subagent nodes with hierarchical structure
     if (subagents && subagents.length > 0) {
@@ -565,6 +573,143 @@ export class MindMapDataService {
   }
 
   /**
+   * Adds task nodes from TaskState to the graph.
+   *
+   * Creates task nodes and links them to:
+   * - Session root
+   * - Tools and files used while task was in_progress (task-action links)
+   * - Other tasks via blockedBy relationships (task-dependency links)
+   *
+   * @param taskState - Task state containing tasks map
+   * @param nodes - Nodes array to add to
+   * @param links - Links array to add to
+   * @param nodeIds - Set of existing node IDs
+   */
+  private static addTaskNodes(
+    taskState: TaskState,
+    nodes: GraphNode[],
+    links: GraphLink[],
+    nodeIds: Set<string>
+  ): void {
+    // Filter out deleted tasks
+    const visibleTasks = Array.from(taskState.tasks.values())
+      .filter(task => task.status !== 'deleted');
+
+    for (const task of visibleTasks) {
+      const taskNodeId = `task-${task.taskId}`;
+
+      if (!nodeIds.has(taskNodeId)) {
+        // Map task status to node status
+        let taskStatus: TaskNodeStatus = 'pending';
+        if (task.status === 'in_progress') taskStatus = 'in_progress';
+        else if (task.status === 'completed') taskStatus = 'completed';
+
+        nodes.push({
+          id: taskNodeId,
+          label: this.truncateLabel(task.subject, 25),
+          fullPath: task.description || task.subject,
+          type: 'task',
+          count: task.associatedToolCalls.length,
+          taskStatus,
+          taskId: task.taskId,
+        });
+        nodeIds.add(taskNodeId);
+
+        // Link task to session root
+        links.push({ source: 'session-root', target: taskNodeId });
+      }
+
+      // Add task-action links for associated tool calls
+      this.addTaskActionLinks(task, taskNodeId, nodeIds, links);
+
+      // Add task-dependency links for blockedBy relationships
+      this.addTaskDependencyLinks(task, taskNodeId, nodeIds, links);
+    }
+  }
+
+  /**
+   * Adds task-action links connecting a task to tools/files used while in_progress.
+   *
+   * @param task - The tracked task
+   * @param taskNodeId - Node ID of the task
+   * @param nodeIds - Set of existing node IDs
+   * @param links - Links array to add to
+   */
+  private static addTaskActionLinks(
+    task: TrackedTask,
+    taskNodeId: string,
+    nodeIds: Set<string>,
+    links: GraphLink[]
+  ): void {
+    const addedLinks = new Set<string>();
+
+    for (const call of task.associatedToolCalls) {
+      // Skip task tools themselves
+      if (this.TASK_TOOLS.includes(call.name)) continue;
+
+      // Link to tool node
+      const toolNodeId = `tool-${call.name}`;
+      if (nodeIds.has(toolNodeId)) {
+        const linkKey = `${taskNodeId}-${toolNodeId}`;
+        if (!addedLinks.has(linkKey)) {
+          links.push({
+            source: taskNodeId,
+            target: toolNodeId,
+            linkType: 'task-action',
+          });
+          addedLinks.add(linkKey);
+        }
+      }
+
+      // Link to file node if this is a file operation
+      if (this.FILE_TOOLS.includes(call.name)) {
+        const filePath = call.input.file_path as string;
+        if (filePath) {
+          const fileNodeId = `file-${filePath}`;
+          if (nodeIds.has(fileNodeId)) {
+            const linkKey = `${taskNodeId}-${fileNodeId}`;
+            if (!addedLinks.has(linkKey)) {
+              links.push({
+                source: taskNodeId,
+                target: fileNodeId,
+                linkType: 'task-action',
+              });
+              addedLinks.add(linkKey);
+            }
+          }
+        }
+      }
+    }
+  }
+
+  /**
+   * Adds task-dependency links for blockedBy relationships.
+   *
+   * @param task - The tracked task
+   * @param taskNodeId - Node ID of the task
+   * @param nodeIds - Set of existing node IDs
+   * @param links - Links array to add to
+   */
+  private static addTaskDependencyLinks(
+    task: TrackedTask,
+    taskNodeId: string,
+    nodeIds: Set<string>,
+    links: GraphLink[]
+  ): void {
+    for (const blockingTaskId of task.blockedBy) {
+      const blockingNodeId = `task-${blockingTaskId}`;
+      if (nodeIds.has(blockingNodeId)) {
+        // Link from blocking task to this task (direction: blocker → blocked)
+        links.push({
+          source: blockingNodeId,
+          target: taskNodeId,
+          linkType: 'task-dependency',
+        });
+      }
+    }
+  }
+
+  /**
    * Adds subagent nodes with hierarchical tool and file structure.
    *
    * Creates a tree structure for each subagent:
@@ -696,6 +841,91 @@ export class MindMapDataService {
               }
             }
           }
+        }
+      }
+
+      // Add subagent task nodes if present
+      if (agent.taskState) {
+        this.addSubagentTaskNodes(agent, agentNodeId, nodes, links, nodeIds);
+      }
+    }
+  }
+
+  /**
+   * Adds task nodes for a subagent with scoped IDs.
+   *
+   * @param agent - Subagent statistics with taskState
+   * @param agentNodeId - Parent subagent node ID
+   * @param nodes - Nodes array to add to
+   * @param links - Links array to add to
+   * @param nodeIds - Set of existing node IDs
+   */
+  private static addSubagentTaskNodes(
+    agent: SubagentStats,
+    agentNodeId: string,
+    nodes: GraphNode[],
+    links: GraphLink[],
+    nodeIds: Set<string>
+  ): void {
+    if (!agent.taskState) return;
+
+    // Filter out deleted tasks
+    const visibleTasks = Array.from(agent.taskState.tasks.values())
+      .filter(task => task.status !== 'deleted');
+
+    for (const task of visibleTasks) {
+      const taskNodeId = `subagent-${agent.agentId}-task-${task.taskId}`;
+
+      if (!nodeIds.has(taskNodeId)) {
+        // Map task status to node status
+        let taskStatus: TaskNodeStatus = 'pending';
+        if (task.status === 'in_progress') taskStatus = 'in_progress';
+        else if (task.status === 'completed') taskStatus = 'completed';
+
+        nodes.push({
+          id: taskNodeId,
+          label: this.truncateLabel(task.subject, 25),
+          fullPath: task.description || task.subject,
+          type: 'task',
+          count: task.associatedToolCalls.length,
+          taskStatus,
+          taskId: task.taskId,
+        });
+        nodeIds.add(taskNodeId);
+
+        // Link task to subagent node
+        links.push({ source: agentNodeId, target: taskNodeId });
+      }
+
+      // Add task-action links for associated tool calls (scoped to subagent)
+      const addedLinks = new Set<string>();
+      for (const call of task.associatedToolCalls) {
+        if (this.TASK_TOOLS.includes(call.name)) continue;
+
+        // Link to subagent's tool node
+        const toolNodeId = `subagent-${agent.agentId}-tool-${call.name}`;
+        if (nodeIds.has(toolNodeId)) {
+          const linkKey = `${taskNodeId}-${toolNodeId}`;
+          if (!addedLinks.has(linkKey)) {
+            links.push({
+              source: taskNodeId,
+              target: toolNodeId,
+              linkType: 'task-action',
+            });
+            addedLinks.add(linkKey);
+          }
+        }
+      }
+
+      // Add task-dependency links (scoped to subagent)
+      for (const blockingTaskId of task.blockedBy) {
+        const blockingNodeId = `subagent-${agent.agentId}-task-${blockingTaskId}`;
+        if (nodeIds.has(blockingNodeId)) {
+          links.push({
+            source: blockingNodeId,
+            target: taskNodeId,
+            linkType: 'task-dependency',
+          });
         }
       }
     }

@@ -23,7 +23,9 @@ import path from 'path';
 import { findActiveSession, findAllSessions, getSessionDirectory, discoverSessionDirectory, findSessionsInDirectory } from './SessionPathResolver';
 import { JsonlParser, extractTokenUsage } from './JsonlParser';
 import { scanSubagentDir } from './SubagentFileScanner';
-import { ClaudeSessionEvent, TokenUsage, ToolCall, SessionStats, ToolAnalytics, TimelineEvent, PendingToolCall, SubagentStats } from '../types/claudeSession';
+import { ClaudeSessionEvent, TokenUsage, ToolCall, SessionStats, ToolAnalytics, TimelineEvent, PendingToolCall, SubagentStats, TaskState, TrackedTask, TaskStatus, PendingUserRequest, ResponseLatency, LatencyStats } from '../types/claudeSession';
+import { SessionSummary, ModelUsageRecord, ToolUsageRecord, createEmptyTokenTotals } from '../types/historicalData';
+import { ModelPricingService } from './ModelPricingService';
 import { log, logError } from './Logger';
 
 /**
@@ -123,6 +125,41 @@ export class SessionMonitor implements vscode.Disposable {
   /** Session ID for subagent scanning */
   private sessionId: string | null = null;
 
+  /** Set of event hashes for deduplication */
+  private seenHashes: Set<string> = new Set();
+
+  /** Maximum number of hashes to track before pruning */
+  private readonly MAX_SEEN_HASHES = 10000;
+
+  /** Task tracking state */
+  private taskState: TaskState = {
+    tasks: new Map(),
+    activeTaskId: null
+  };
+
+  /** Pending TaskCreate calls awaiting results (tool_use_id -> TaskCreate input) */
+  private pendingTaskCreates: Map<string, {
+    subject: string;
+    description?: string;
+    activeForm?: string;
+    timestamp: Date;
+  }> = new Map();
+
+  /** Task-related tool names */
+  private static readonly TASK_TOOLS = ['TaskCreate', 'TaskUpdate', 'TaskGet', 'TaskList'];
+
+  /** Pending user request awaiting assistant response */
+  private pendingUserRequest: PendingUserRequest | null = null;
+
+  /** Recent latency records (capped at MAX_LATENCY_RECORDS) */
+  private latencyRecords: ResponseLatency[] = [];
+
+  /** Maximum number of latency records to keep */
+  private readonly MAX_LATENCY_RECORDS = 100;
+
+  /** Timeout for stale pending requests (10 minutes) */
+  private readonly STALE_REQUEST_TIMEOUT_MS = 10 * 60 * 1000;
+
   // Event emitters for external consumers
   private readonly _onTokenUsage = new vscode.EventEmitter<TokenUsage>();
   private readonly _onToolCall = new vscode.EventEmitter<ToolCall>();
@@ -131,6 +168,7 @@ export class SessionMonitor implements vscode.Disposable {
   private readonly _onToolAnalytics = new vscode.EventEmitter<ToolAnalytics>();
   private readonly _onTimelineEvent = new vscode.EventEmitter<TimelineEvent>();
   private readonly _onDiscoveryModeChange = new vscode.EventEmitter<boolean>();
+  private readonly _onLatencyUpdate = new vscode.EventEmitter<LatencyStats>();
 
   /** Fires when token usage is detected in session */
   readonly onTokenUsage = this._onTokenUsage.event;
@@ -152,6 +190,9 @@ export class SessionMonitor implements vscode.Disposable {
 
   /** Fires when discovery mode changes (true = waiting for session, false = monitoring active) */
   readonly onDiscoveryModeChange = this._onDiscoveryModeChange.event;
+
+  /** Fires when response latency data is updated */
+  readonly onLatencyUpdate = this._onLatencyUpdate.event;
 
   /**
    * Creates a new SessionMonitor.
@@ -449,6 +490,10 @@ export class SessionMonitor implements vscode.Disposable {
     this.recentUsageEvents = [];
     this.sessionStartTime = null;
     this._subagentStats = [];
+    this.seenHashes.clear();
+    this.resetTaskState();
+    this.pendingUserRequest = null;
+    this.latencyRecords = [];
 
     // Reset statistics
     this.stats = {
@@ -554,7 +599,12 @@ export class SessionMonitor implements vscode.Disposable {
       errorDetails: new Map(this.errorDetails),
       currentContextSize: this.currentContextSize,
       recentUsageEvents: [...this.recentUsageEvents],
-      sessionStartTime: this.sessionStartTime
+      sessionStartTime: this.sessionStartTime,
+      taskState: this.taskState.tasks.size > 0 ? {
+        tasks: new Map(this.taskState.tasks),
+        activeTaskId: this.taskState.activeTaskId
+      } : undefined,
+      latencyStats: this.latencyRecords.length > 0 ? this.getLatencyStats() : undefined
     };
   }
 
@@ -600,6 +650,73 @@ export class SessionMonitor implements vscode.Disposable {
 
     const sessionDir = path.dirname(this.sessionPath);
     this._subagentStats = scanSubagentDir(sessionDir, this.sessionId);
+  }
+
+  /**
+   * Gets a summary of the current session for historical data aggregation.
+   *
+   * Returns null if no session is active or no data has been collected.
+   * Call this when a session ends to get data for HistoricalDataService.
+   *
+   * @returns Session summary with tokens, cost, model/tool usage, or null
+   */
+  getSessionSummary(): SessionSummary | null {
+    if (!this.sessionId || !this.sessionStartTime) {
+      return null;
+    }
+
+    // Build model usage with costs
+    const modelUsage: ModelUsageRecord[] = [];
+    this.stats.modelUsage.forEach((usage, model) => {
+      const pricing = ModelPricingService.getPricing(model);
+      // Estimate cost based on total tokens (rough approximation - assume 50/50 split)
+      const estimatedInput = Math.floor(usage.tokens / 2);
+      const estimatedOutput = usage.tokens - estimatedInput;
+      const cost = ModelPricingService.calculateCost({
+        inputTokens: estimatedInput,
+        outputTokens: estimatedOutput,
+        cacheWriteTokens: 0,
+        cacheReadTokens: 0,
+      }, pricing);
+      modelUsage.push({
+        model,
+        calls: usage.calls,
+        tokens: usage.tokens,
+        cost,
+      });
+    });
+
+    // Build tool usage from analytics
+    const toolUsage: ToolUsageRecord[] = [];
+    this.toolAnalyticsMap.forEach((analytics, tool) => {
+      toolUsage.push({
+        tool,
+        calls: analytics.successCount + analytics.failureCount,
+        successCount: analytics.successCount,
+        failureCount: analytics.failureCount,
+      });
+    });
+
+    // Build token totals
+    const tokens = createEmptyTokenTotals();
+    tokens.inputTokens = this.stats.totalInputTokens;
+    tokens.outputTokens = this.stats.totalOutputTokens;
+    tokens.cacheWriteTokens = this.stats.totalCacheWriteTokens;
+    tokens.cacheReadTokens = this.stats.totalCacheReadTokens;
+
+    // Calculate total cost from model usage
+    const totalCost = modelUsage.reduce((sum, m) => sum + m.cost, 0);
+
+    return {
+      sessionId: this.sessionId,
+      startTime: this.sessionStartTime.toISOString(),
+      endTime: new Date().toISOString(),
+      tokens,
+      totalCost,
+      messageCount: this.stats.messageCount,
+      modelUsage,
+      toolUsage,
+    };
   }
 
   /**
@@ -803,6 +920,7 @@ export class SessionMonitor implements vscode.Disposable {
     this._onToolAnalytics.dispose();
     this._onTimelineEvent.dispose();
     this._onDiscoveryModeChange.dispose();
+    this._onLatencyUpdate.dispose();
 
     // Reset state
     this.sessionPath = null;
@@ -818,8 +936,12 @@ export class SessionMonitor implements vscode.Disposable {
     this.recentUsageEvents = [];
     this.sessionStartTime = null;
     this._subagentStats = [];
+    this.seenHashes.clear();
     this.isWaitingForSession = false;
     this.fastDiscoveryStartTime = null;
+    this.resetTaskState();
+    this.pendingUserRequest = null;
+    this.latencyRecords = [];
 
     log('SessionMonitor disposed');
   }
@@ -1065,6 +1187,46 @@ export class SessionMonitor implements vscode.Disposable {
   }
 
   /**
+   * Generates a hash for event deduplication.
+   *
+   * Uses event type, timestamp, and message/request IDs to create a unique key.
+   *
+   * @param event - Session event to hash
+   * @returns Hash string for deduplication
+   */
+  private generateEventHash(event: ClaudeSessionEvent): string {
+    const messageId = (event.message as unknown as { id?: string })?.id || '';
+    const requestId = (event as unknown as { requestId?: string })?.requestId || '';
+    return `${event.type}:${event.timestamp}:${messageId}:${requestId}`;
+  }
+
+  /**
+   * Checks if an event is a duplicate and tracks it if not.
+   *
+   * Uses a Set with bounded size to prevent memory leaks.
+   * When the set reaches MAX_SEEN_HASHES, prunes the oldest half.
+   *
+   * @param event - Session event to check
+   * @returns True if this event has been seen before
+   */
+  private isDuplicateEvent(event: ClaudeSessionEvent): boolean {
+    const hash = this.generateEventHash(event);
+
+    if (this.seenHashes.has(hash)) {
+      return true;
+    }
+
+    // Prevent unbounded growth by pruning when limit reached
+    if (this.seenHashes.size >= this.MAX_SEEN_HASHES) {
+      const arr = Array.from(this.seenHashes);
+      this.seenHashes = new Set(arr.slice(Math.floor(arr.length / 2)));
+    }
+
+    this.seenHashes.add(hash);
+    return false;
+  }
+
+  /**
    * Handles parsed session events.
    *
    * Extracts token usage and tool calls, updates statistics,
@@ -1073,6 +1235,11 @@ export class SessionMonitor implements vscode.Disposable {
    * @param event - Parsed session event
    */
   private handleEvent(event: ClaudeSessionEvent): void {
+    // Deduplicate events to prevent double-counting when re-reading files
+    if (this.isDuplicateEvent(event)) {
+      return;
+    }
+
     // Update message count
     this.stats.messageCount++;
     this.stats.lastUpdated = new Date();
@@ -1082,9 +1249,54 @@ export class SessionMonitor implements vscode.Disposable {
       this.sessionStartTime = new Date(event.timestamp);
     }
 
-    // Extract and emit token usage
+    // Track latency: user events with actual prompt content start a pending request
+    if (event.type === 'user' && this.hasUserPromptContent(event)) {
+      // Check if we should discard a stale pending request
+      if (this.pendingUserRequest) {
+        const elapsed = Date.now() - this.pendingUserRequest.timestamp.getTime();
+        if (elapsed > this.STALE_REQUEST_TIMEOUT_MS) {
+          log(`Discarding stale pending request after ${elapsed}ms`);
+          this.pendingUserRequest = null;
+        }
+      }
+
+      // Create new pending request for latency tracking
+      this.pendingUserRequest = {
+        timestamp: new Date(event.timestamp),
+        firstResponseReceived: false
+      };
+    }
+
+    // Track latency: first assistant event with text content marks first token
+    if (event.type === 'assistant' && this.pendingUserRequest && !this.pendingUserRequest.firstResponseReceived) {
+      const hasTextContent = this.hasAssistantTextContent(event);
+      if (hasTextContent) {
+        const responseTimestamp = new Date(event.timestamp);
+        const firstTokenLatencyMs = responseTimestamp.getTime() - this.pendingUserRequest.timestamp.getTime();
+
+        this.pendingUserRequest.firstResponseReceived = true;
+        this.pendingUserRequest.firstResponseTimestamp = responseTimestamp;
+        this.pendingUserRequest.firstTokenLatencyMs = firstTokenLatencyMs;
+      }
+    }
+
+    // Track latency: assistant event with usage data marks cycle completion
     const usage = extractTokenUsage(event);
     if (usage) {
+      // Complete latency cycle if we have a pending request with first response
+      if (this.pendingUserRequest && this.pendingUserRequest.firstResponseReceived) {
+        const totalResponseTimeMs = new Date(event.timestamp).getTime() - this.pendingUserRequest.timestamp.getTime();
+
+        this.recordLatency({
+          firstTokenLatencyMs: this.pendingUserRequest.firstTokenLatencyMs!,
+          totalResponseTimeMs,
+          requestTimestamp: this.pendingUserRequest.timestamp
+        });
+
+        // Clear pending request after recording
+        this.pendingUserRequest = null;
+      }
+
       log(`Token usage extracted - input: ${usage.inputTokens}, output: ${usage.outputTokens}, cacheWrite: ${usage.cacheWriteTokens}, cacheRead: ${usage.cacheReadTokens}`);
       // Update statistics
       this.stats.totalInputTokens += usage.inputTokens;
@@ -1126,6 +1338,120 @@ export class SessionMonitor implements vscode.Disposable {
 
     // Add to timeline
     this.addTimelineEvent(event);
+  }
+
+  /**
+   * Checks if a user event contains actual prompt content (not just tool_result).
+   *
+   * User events that are only tool_result continuations should not start
+   * a new latency tracking cycle.
+   *
+   * @param event - User session event
+   * @returns True if event has user prompt text content
+   */
+  private hasUserPromptContent(event: ClaudeSessionEvent): boolean {
+    const content = event.message?.content;
+    if (!content) return false;
+
+    if (typeof content === 'string') {
+      return content.trim().length > 0;
+    }
+
+    if (Array.isArray(content)) {
+      // Check for text blocks that are actual user input, not tool_result
+      return content.some((block: any) =>
+        block && typeof block === 'object' &&
+        block.type === 'text' &&
+        typeof block.text === 'string' &&
+        block.text.trim().length > 0
+      );
+    }
+
+    return false;
+  }
+
+  /**
+   * Checks if an assistant event contains text content (not just tool_use).
+   *
+   * We track first token latency to the first assistant response with text,
+   * since tool_use blocks don't represent user-visible output.
+   *
+   * @param event - Assistant session event
+   * @returns True if event has text content
+   */
+  private hasAssistantTextContent(event: ClaudeSessionEvent): boolean {
+    const content = event.message?.content;
+    if (!content) return false;
+
+    if (typeof content === 'string') {
+      return content.trim().length > 0;
+    }
+
+    if (Array.isArray(content)) {
+      return content.some((block: any) =>
+        block && typeof block === 'object' &&
+        block.type === 'text' &&
+        typeof block.text === 'string' &&
+        block.text.trim().length > 0
+      );
+    }
+
+    return false;
+  }
+
+  /**
+   * Records a completed latency measurement.
+   *
+   * Adds to the latency records array (capped at MAX_LATENCY_RECORDS)
+   * and emits a latency update event.
+   *
+   * @param latency - Response latency data to record
+   */
+  private recordLatency(latency: ResponseLatency): void {
+    this.latencyRecords.push(latency);
+
+    // Cap at MAX_LATENCY_RECORDS
+    if (this.latencyRecords.length > this.MAX_LATENCY_RECORDS) {
+      this.latencyRecords = this.latencyRecords.slice(-this.MAX_LATENCY_RECORDS);
+    }
+
+    // Emit update
+    this._onLatencyUpdate.fire(this.getLatencyStats());
+  }
+
+  /**
+   * Gets current latency statistics.
+   *
+   * Calculates aggregated latency metrics from recorded data.
+   *
+   * @returns Aggregated latency statistics
+   */
+  getLatencyStats(): LatencyStats {
+    if (this.latencyRecords.length === 0) {
+      return {
+        recentLatencies: [],
+        avgFirstTokenLatencyMs: 0,
+        maxFirstTokenLatencyMs: 0,
+        avgTotalResponseTimeMs: 0,
+        lastFirstTokenLatencyMs: null,
+        completedCycles: 0
+      };
+    }
+
+    const firstTokenLatencies = this.latencyRecords.map(r => r.firstTokenLatencyMs);
+    const totalResponseTimes = this.latencyRecords.map(r => r.totalResponseTimeMs);
+
+    const avg = (arr: number[]) => arr.reduce((a, b) => a + b, 0) / arr.length;
+    const max = (arr: number[]) => Math.max(...arr);
+
+    return {
+      recentLatencies: [...this.latencyRecords],
+      avgFirstTokenLatencyMs: avg(firstTokenLatencies),
+      maxFirstTokenLatencyMs: max(firstTokenLatencies),
+      avgTotalResponseTimeMs: avg(totalResponseTimes),
+      lastFirstTokenLatencyMs: firstTokenLatencies[firstTokenLatencies.length - 1],
+      completedCycles: this.latencyRecords.length
+    };
   }
 
   /**
@@ -1437,6 +1763,9 @@ export class SessionMonitor implements vscode.Disposable {
           startTime: new Date(timestamp)
         });
 
+        // Handle task-related tools
+        this.handleTaskToolUse(toolUse, timestamp);
+
         // Initialize analytics for this tool if needed
         if (!this.toolAnalyticsMap.has(toolUse.name)) {
           this.toolAnalyticsMap.set(toolUse.name, {
@@ -1469,17 +1798,115 @@ export class SessionMonitor implements vscode.Disposable {
         }
         this._onTimelineEvent.fire(this.timeline[0]);
 
+        // Build tool call object
+        const toolCall: ToolCall = {
+          name: toolUse.name,
+          input: toolUse.input,
+          timestamp: new Date(timestamp)
+        };
+
+        // Associate non-task tool calls with active task
+        if (!SessionMonitor.TASK_TOOLS.includes(toolUse.name) && this.taskState.activeTaskId) {
+          const activeTask = this.taskState.tasks.get(this.taskState.activeTaskId);
+          if (activeTask) {
+            activeTask.associatedToolCalls.push(toolCall);
+          }
+        }
+
         // Emit tool call event
-        this._onToolCall.fire({
-          name: toolUse.name,
-          input: toolUse.input,
-          timestamp: new Date(timestamp)
-        });
-        this.stats.toolCalls.push({
-          name: toolUse.name,
-          input: toolUse.input,
-          timestamp: new Date(timestamp)
-        });
+        this._onToolCall.fire(toolCall);
+        this.stats.toolCalls.push(toolCall);
+      }
+    }
+  }
+
+  /**
+   * Handles task-related tool uses (TaskCreate, TaskUpdate).
+   *
+   * @param toolUse - Tool use block with name and input
+   * @param timestamp - Event timestamp
+   */
+  private handleTaskToolUse(
+    toolUse: { id: string; name: string; input: Record<string, unknown> },
+    timestamp: string
+  ): void {
+    const now = new Date(timestamp);
+
+    if (toolUse.name === 'TaskCreate') {
+      // Store pending TaskCreate to correlate with result
+      this.pendingTaskCreates.set(toolUse.id, {
+        subject: String(toolUse.input.subject || ''),
+        description: toolUse.input.description ? String(toolUse.input.description) : undefined,
+        activeForm: toolUse.input.activeForm ? String(toolUse.input.activeForm) : undefined,
+        timestamp: now
+      });
+    } else if (toolUse.name === 'TaskUpdate') {
+      const taskId = String(toolUse.input.taskId || '');
+      const task = this.taskState.tasks.get(taskId);
+
+      if (task) {
+        // Update task fields if provided
+        if (toolUse.input.status) {
+          const newStatus = toolUse.input.status as TaskStatus;
+          const oldStatus = task.status;
+          task.status = newStatus;
+
+          // Track active task transitions
+          if (newStatus === 'in_progress' && oldStatus !== 'in_progress') {
+            this.taskState.activeTaskId = taskId;
+          } else if (oldStatus === 'in_progress' && newStatus !== 'in_progress') {
+            if (this.taskState.activeTaskId === taskId) {
+              this.taskState.activeTaskId = null;
+            }
+          }
+        }
+        if (toolUse.input.subject) {
+          task.subject = String(toolUse.input.subject);
+        }
+        if (toolUse.input.description) {
+          task.description = String(toolUse.input.description);
+        }
+        if (toolUse.input.activeForm) {
+          task.activeForm = String(toolUse.input.activeForm);
+        }
+        if (Array.isArray(toolUse.input.addBlockedBy)) {
+          for (const id of toolUse.input.addBlockedBy) {
+            const idStr = String(id);
+            if (!task.blockedBy.includes(idStr)) {
+              task.blockedBy.push(idStr);
+            }
+          }
+        }
+        if (Array.isArray(toolUse.input.addBlocks)) {
+          for (const id of toolUse.input.addBlocks) {
+            const idStr = String(id);
+            if (!task.blocks.includes(idStr)) {
+              task.blocks.push(idStr);
+            }
+          }
+        }
+        task.updatedAt = now;
+      } else {
+        // TaskUpdate for unknown task - create placeholder
+        log(`TaskUpdate for unknown task ${taskId}, creating placeholder`);
+        const newTask: TrackedTask = {
+          taskId,
+          subject: toolUse.input.subject ? String(toolUse.input.subject) : `Task ${taskId}`,
+          description: toolUse.input.description ? String(toolUse.input.description) : undefined,
+          status: (toolUse.input.status as TaskStatus) || 'pending',
+          createdAt: now,
+          updatedAt: now,
+          activeForm: toolUse.input.activeForm ? String(toolUse.input.activeForm) : undefined,
+          blockedBy: [],
+          blocks: [],
+          associatedToolCalls: []
+        };
+        this.taskState.tasks.set(taskId, newTask);
+
+        // Set active if in_progress
+        if (newTask.status === 'in_progress') {
+          this.taskState.activeTaskId = taskId;
+        }
       }
     }
   }
@@ -1499,6 +1926,11 @@ export class SessionMonitor implements vscode.Disposable {
 
         const pending = this.pendingToolCalls.get(toolResult.tool_use_id);
         if (pending) {
+          // Handle TaskCreate results
+          if (pending.name === 'TaskCreate') {
+            this.handleTaskCreateResult(toolResult.tool_use_id, toolResult.content, timestamp, toolResult.is_error);
+          }
+
           // Calculate duration
           const endTime = new Date(timestamp);
           const duration = endTime.getTime() - pending.startTime.getTime();
@@ -1542,5 +1974,90 @@ export class SessionMonitor implements vscode.Disposable {
         }
       }
     }
+  }
+
+  /**
+   * Handles TaskCreate result to extract task ID and create TrackedTask.
+   *
+   * @param toolUseId - The tool_use_id for correlation
+   * @param resultContent - The tool result content
+   * @param timestamp - Event timestamp
+   * @param isError - Whether the tool result is an error
+   */
+  private handleTaskCreateResult(
+    toolUseId: string,
+    resultContent: unknown,
+    timestamp: string,
+    isError?: boolean
+  ): void {
+    const pendingCreate = this.pendingTaskCreates.get(toolUseId);
+    if (!pendingCreate) {
+      return;
+    }
+
+    // Clean up pending create
+    this.pendingTaskCreates.delete(toolUseId);
+
+    // Don't create task on error
+    if (isError) {
+      log(`TaskCreate failed for tool_use_id ${toolUseId}`);
+      return;
+    }
+
+    // Extract task ID from result
+    // Result format is typically: "Task #1 created successfully: {subject}"
+    // or may contain the task ID in various formats
+    let taskId: string | null = null;
+
+    const resultStr = typeof resultContent === 'string'
+      ? resultContent
+      : JSON.stringify(resultContent || '');
+
+    // Try to match "Task #N" pattern
+    const taskIdMatch = resultStr.match(/Task #(\d+)/i);
+    if (taskIdMatch) {
+      taskId = taskIdMatch[1];
+    } else {
+      // Try to match taskId in JSON-like content
+      const jsonIdMatch = resultStr.match(/"taskId"\s*:\s*"?(\d+)"?/i);
+      if (jsonIdMatch) {
+        taskId = jsonIdMatch[1];
+      }
+    }
+
+    if (!taskId) {
+      log(`Could not extract task ID from TaskCreate result: ${resultStr.substring(0, 100)}`);
+      return;
+    }
+
+    const now = new Date(timestamp);
+
+    // Create the tracked task
+    const task: TrackedTask = {
+      taskId,
+      subject: pendingCreate.subject,
+      description: pendingCreate.description,
+      status: 'pending', // TaskCreate always creates in pending status
+      createdAt: pendingCreate.timestamp,
+      updatedAt: now,
+      activeForm: pendingCreate.activeForm,
+      blockedBy: [],
+      blocks: [],
+      associatedToolCalls: []
+    };
+
+    this.taskState.tasks.set(taskId, task);
+    log(`Created TrackedTask: ${taskId} - "${task.subject}"`);
+  }
+
+  /**
+   * Resets task state. Called when session resets or switches.
+   */
+  private resetTaskState(): void {
+    this.taskState = {
+      tasks: new Map(),
+      activeTaskId: null
+    };
+    this.pendingTaskCreates.clear();
   }
 }

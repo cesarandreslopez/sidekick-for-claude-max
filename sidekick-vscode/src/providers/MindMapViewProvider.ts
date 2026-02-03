@@ -399,6 +399,40 @@ export class MindMapViewProvider implements vscode.WebviewViewProvider, vscode.D
       filter: drop-shadow(0 0 4px var(--vscode-charts-yellow, #FFD700));
     }
 
+    .link.task-action {
+      stroke: var(--vscode-charts-orange, #FF6B6B);
+      stroke-opacity: 0.5;
+      stroke-dasharray: 4, 2;
+    }
+
+    .link.task-dependency {
+      stroke: var(--vscode-charts-red, #D0021B);
+      stroke-opacity: 0.7;
+      stroke-dasharray: 6, 3;
+      stroke-width: 2;
+    }
+
+    /* Task status styling */
+    .node.task-pending {
+      stroke: var(--vscode-charts-yellow, #FFD700);
+      stroke-width: 2;
+    }
+
+    .node.task-in-progress {
+      stroke: var(--vscode-charts-green, #4caf50);
+      stroke-width: 3;
+      animation: task-pulse 1.5s ease-in-out infinite;
+    }
+
+    .node.task-completed {
+      opacity: 0.7;
+    }
+
+    @keyframes task-pulse {
+      0%, 100% { stroke-opacity: 1; }
+      50% { stroke-opacity: 0.4; }
+    }
+
     /* Tooltip */
     .tooltip {
       position: absolute;
@@ -504,6 +538,10 @@ export class MindMapViewProvider implements vscode.WebviewViewProvider, vscode.D
       <span class="legend-dot" style="background: #D0021B;"></span>
       <span>Command</span>
     </div>
+    <div class="legend-item">
+      <span class="legend-dot" style="background: #FF6B6B;"></span>
+      <span>Task</span>
+    </div>
   </div>
 
   <script nonce="${nonce}" src="https://cdn.jsdelivr.net/npm/d3@7"></script>
@@ -520,7 +558,8 @@ export class MindMapViewProvider implements vscode.WebviewViewProvider, vscode.D
         subagent: '#BD10E0',
         url: '#50E3C2',
         directory: '#8B572A',  // Brown - represents folders
-        command: '#D0021B'     // Red - represents terminal commands
+        command: '#D0021B',    // Red - represents terminal commands
+        task: '#FF6B6B'        // Coral red - represents tasks
       };
 
       // Sizing configuration for dynamic node sizes
@@ -532,7 +571,8 @@ export class MindMapViewProvider implements vscode.WebviewViewProvider, vscode.D
         subagent:  { base: 8,  min: 6,  max: 14, scale: 2 },     // Scales with events
         url:       { base: 7,  min: 5,  max: 14, scale: 2 },     // Scales with accesses
         directory: { base: 7,  min: 5,  max: 14, scale: 2 },     // Scales with searches
-        command:   { base: 7,  min: 5,  max: 14, scale: 2 }      // Scales with executions
+        command:   { base: 7,  min: 5,  max: 14, scale: 2 },     // Scales with executions
+        task:      { base: 10, min: 8,  max: 16, scale: 2 }      // Scales with associated actions
       };
 
       function calculateNodeSize(d) {
@@ -694,16 +734,50 @@ export class MindMapViewProvider implements vscode.WebviewViewProvider, vscode.D
 
         link.enter()
           .append('line')
-          .attr('class', function(d) { return d.isLatest ? 'link latest' : 'link'; })
-          .attr('stroke-width', function(d) { return d.isLatest ? 3 : 1.5; });
+          .attr('class', function(d) { return getLinkClass(d); })
+          .attr('stroke-width', function(d) { return getLinkWidth(d); });
 
         // Update class on existing links
         linkGroup.selectAll('line')
-          .attr('class', function(d) { return d.isLatest ? 'link latest' : 'link'; })
-          .attr('stroke-width', function(d) { return d.isLatest ? 3 : 1.5; });
+          .attr('class', function(d) { return getLinkClass(d); })
+          .attr('stroke-width', function(d) { return getLinkWidth(d); });
 
         // Raise latest link to render on top
         linkGroup.selectAll('line.latest').raise();
+
+        /**
+         * Gets CSS class for a link based on its type and properties.
+         */
+        function getLinkClass(d) {
+          var classes = ['link'];
+          if (d.isLatest) classes.push('latest');
+          if (d.linkType === 'task-action') classes.push('task-action');
+          if (d.linkType === 'task-dependency') classes.push('task-dependency');
+          return classes.join(' ');
+        }
+
+        /**
+         * Gets stroke width for a link based on its type.
+         */
+        function getLinkWidth(d) {
+          if (d.isLatest) return 3;
+          if (d.linkType === 'task-dependency') return 2;
+          return 1.5;
+        }
+
+        /**
+         * Gets CSS class for a node based on its type and properties.
+         */
+        function getNodeClass(d) {
+          var classes = ['node'];
+          var isClickable = d.type === 'file' || d.type === 'url';
+          if (isClickable) classes.push('clickable');
+          // Add task status class
+          if (d.type === 'task' && d.taskStatus) {
+            classes.push('task-' + d.taskStatus);
+          }
+          return classes.join(' ');
+        }
 
         // Update nodes
         const node = nodeGroup.selectAll('circle')
@@ -713,10 +787,7 @@ export class MindMapViewProvider implements vscode.WebviewViewProvider, vscode.D
 
         node.enter()
           .append('circle')
-          .attr('class', function(d) {
-            const isClickable = d.type === 'file' || d.type === 'url';
-            return isClickable ? 'node clickable' : 'node';
-          })
+          .attr('class', function(d) { return getNodeClass(d); })
           .attr('r', function(d) { return calculateNodeSize(d); })
           .attr('fill', function(d) { return NODE_COLORS[d.type]; })
           .call(drag(simulation))
@@ -741,6 +812,17 @@ export class MindMapViewProvider implements vscode.WebviewViewProvider, vscode.D
               } else {
                 tooltipEl.textContent = firstLine;
               }
+            } else if (d.type === 'task') {
+              // For tasks, show subject, status, and action count
+              var statusLabel = d.taskStatus || 'unknown';
+              var statusColor = statusLabel === 'in_progress' ? 'var(--vscode-charts-green, #4caf50)'
+                              : statusLabel === 'pending' ? 'var(--vscode-charts-yellow, #FFD700)'
+                              : 'var(--vscode-descriptionForeground)';
+              var actionCount = d.count || 0;
+              var actionText = actionCount === 1 ? '1 action' : actionCount + ' actions';
+              tooltipEl.innerHTML = '<strong>' + label + '</strong><br>' +
+                '<span style="color: ' + statusColor + '">● ' + statusLabel.replace('_', ' ') + '</span>' +
+                '<br>' + actionText;
             } else {
               // For other nodes, show count if available
               var count = d.count ? ' (' + d.count + ')' : '';
@@ -788,6 +870,7 @@ export class MindMapViewProvider implements vscode.WebviewViewProvider, vscode.D
 
         // Update merged selections
         nodeGroup.selectAll('circle')
+          .attr('class', function(d) { return getNodeClass(d); })
           .attr('r', function(d) { return calculateNodeSize(d); })
           .attr('fill', function(d) { return NODE_COLORS[d.type]; });
 

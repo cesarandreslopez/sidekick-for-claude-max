@@ -10,7 +10,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import type { ToolCall, SubagentStats } from '../types/claudeSession';
+import type { ToolCall, SubagentStats, TaskState, TrackedTask, TaskStatus } from '../types/claudeSession';
 import { log } from './Logger';
 
 /**
@@ -18,6 +18,9 @@ import { log } from './Logger';
  * Files are named like: agent-<hash>.jsonl
  */
 const AGENT_FILE_PATTERN = /^agent-(.+)\.jsonl$/;
+
+/** Task-related tool names */
+const TASK_TOOLS = ['TaskCreate', 'TaskUpdate', 'TaskGet', 'TaskList'];
 
 /**
  * Scans subagent directory for agent JSONL files and extracts tool calls.
@@ -78,7 +81,7 @@ export function scanSubagentDir(sessionDir: string, sessionId: string): Subagent
 }
 
 /**
- * Parses a single subagent JSONL file and extracts tool calls.
+ * Parses a single subagent JSONL file and extracts tool calls and task state.
  *
  * @param filePath - Path to the agent JSONL file
  * @param agentId - Agent ID extracted from filename
@@ -93,9 +96,22 @@ function parseAgentFile(filePath: string, agentId: string): SubagentStats | null
     let agentType: string | undefined;
     let description: string | undefined;
 
+    // Task tracking state
+    const taskState: TaskState = {
+      tasks: new Map(),
+      activeTaskId: null
+    };
+    const pendingTaskCreates = new Map<string, {
+      subject: string;
+      description?: string;
+      activeForm?: string;
+      timestamp: Date;
+    }>();
+
     for (const line of lines) {
       try {
         const event = JSON.parse(line);
+        const eventTimestamp = new Date(event.timestamp || Date.now());
 
         // Extract agent type and description from Task tool invocation
         // This appears in the parent session, but we can also look for it
@@ -127,13 +143,35 @@ function parseAgentFile(filePath: string, agentId: string): SubagentStats | null
                 input: Record<string, unknown>;
               };
 
-              toolCalls.push({
+              const toolCall: ToolCall = {
                 name: toolUse.name,
                 input: toolUse.input || {},
-                timestamp: new Date(event.timestamp || Date.now())
-              });
+                timestamp: eventTimestamp
+              };
 
-              // If this is a Task tool call, we can extract subagent info
+              // Handle task tools
+              if (toolUse.name === 'TaskCreate') {
+                pendingTaskCreates.set(toolUse.id, {
+                  subject: String(toolUse.input.subject || ''),
+                  description: toolUse.input.description ? String(toolUse.input.description) : undefined,
+                  activeForm: toolUse.input.activeForm ? String(toolUse.input.activeForm) : undefined,
+                  timestamp: eventTimestamp
+                });
+              } else if (toolUse.name === 'TaskUpdate') {
+                handleTaskUpdate(taskState, toolUse.input, eventTimestamp);
+              }
+
+              // Associate non-task tool calls with active task
+              if (!TASK_TOOLS.includes(toolUse.name) && taskState.activeTaskId) {
+                const activeTask = taskState.tasks.get(taskState.activeTaskId);
+                if (activeTask) {
+                  activeTask.associatedToolCalls.push(toolCall);
+                }
+              }
+
+              toolCalls.push(toolCall);
+
+              // If this is a Task tool call (spawning another subagent), extract info
               if (toolUse.name === 'Task' && toolUse.input) {
                 if (toolUse.input.subagent_type && !agentType) {
                   agentType = String(toolUse.input.subagent_type);
@@ -141,6 +179,46 @@ function parseAgentFile(filePath: string, agentId: string): SubagentStats | null
                 if (toolUse.input.description && !description) {
                   description = String(toolUse.input.description);
                 }
+              }
+            }
+          }
+        }
+
+        // Look for tool_result events in user messages
+        if (event.type === 'user' && event.message?.content) {
+          const contentArray = Array.isArray(event.message.content)
+            ? event.message.content
+            : [];
+
+          for (const block of contentArray) {
+            if (block && typeof block === 'object' && block.type === 'tool_result') {
+              const toolResult = block as {
+                type: string;
+                tool_use_id: string;
+                content?: unknown;
+                is_error?: boolean;
+              };
+
+              // Handle TaskCreate results
+              const pendingCreate = pendingTaskCreates.get(toolResult.tool_use_id);
+              if (pendingCreate && !toolResult.is_error) {
+                const taskId = extractTaskIdFromResult(toolResult.content);
+                if (taskId) {
+                  const task: TrackedTask = {
+                    taskId,
+                    subject: pendingCreate.subject,
+                    description: pendingCreate.description,
+                    status: 'pending',
+                    createdAt: pendingCreate.timestamp,
+                    updatedAt: eventTimestamp,
+                    activeForm: pendingCreate.activeForm,
+                    blockedBy: [],
+                    blocks: [],
+                    associatedToolCalls: []
+                  };
+                  taskState.tasks.set(taskId, task);
+                }
+                pendingTaskCreates.delete(toolResult.tool_use_id);
               }
             }
           }
@@ -156,7 +234,8 @@ function parseAgentFile(filePath: string, agentId: string): SubagentStats | null
         agentId,
         agentType,
         description,
-        toolCalls
+        toolCalls,
+        taskState: taskState.tasks.size > 0 ? taskState : undefined
       };
     }
 
@@ -165,6 +244,95 @@ function parseAgentFile(filePath: string, agentId: string): SubagentStats | null
     log(`Failed to parse agent file: ${filePath}`);
     return null;
   }
+}
+
+/**
+ * Handles TaskUpdate tool input and updates task state.
+ */
+function handleTaskUpdate(
+  taskState: TaskState,
+  input: Record<string, unknown>,
+  timestamp: Date
+): void {
+  const taskId = String(input.taskId || '');
+  let task = taskState.tasks.get(taskId);
+
+  if (!task) {
+    // Create placeholder task for unknown TaskUpdate
+    task = {
+      taskId,
+      subject: input.subject ? String(input.subject) : `Task ${taskId}`,
+      description: input.description ? String(input.description) : undefined,
+      status: 'pending',
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      blockedBy: [],
+      blocks: [],
+      associatedToolCalls: []
+    };
+    taskState.tasks.set(taskId, task);
+  }
+
+  // Update task fields
+  if (input.status) {
+    const newStatus = input.status as TaskStatus;
+    const oldStatus = task.status;
+    task.status = newStatus;
+
+    // Track active task transitions
+    if (newStatus === 'in_progress' && oldStatus !== 'in_progress') {
+      taskState.activeTaskId = taskId;
+    } else if (oldStatus === 'in_progress' && newStatus !== 'in_progress') {
+      if (taskState.activeTaskId === taskId) {
+        taskState.activeTaskId = null;
+      }
+    }
+  }
+  if (input.subject) task.subject = String(input.subject);
+  if (input.description) task.description = String(input.description);
+  if (input.activeForm) task.activeForm = String(input.activeForm);
+
+  if (Array.isArray(input.addBlockedBy)) {
+    for (const id of input.addBlockedBy) {
+      const idStr = String(id);
+      if (!task.blockedBy.includes(idStr)) {
+        task.blockedBy.push(idStr);
+      }
+    }
+  }
+  if (Array.isArray(input.addBlocks)) {
+    for (const id of input.addBlocks) {
+      const idStr = String(id);
+      if (!task.blocks.includes(idStr)) {
+        task.blocks.push(idStr);
+      }
+    }
+  }
+
+  task.updatedAt = timestamp;
+}
+
+/**
+ * Extracts task ID from TaskCreate result content.
+ */
+function extractTaskIdFromResult(resultContent: unknown): string | null {
+  const resultStr = typeof resultContent === 'string'
+    ? resultContent
+    : JSON.stringify(resultContent || '');
+
+  // Try to match "Task #N" pattern
+  const taskIdMatch = resultStr.match(/Task #(\d+)/i);
+  if (taskIdMatch) {
+    return taskIdMatch[1];
+  }
+
+  // Try to match taskId in JSON-like content
+  const jsonIdMatch = resultStr.match(/"taskId"\s*:\s*"?(\d+)"?/i);
+  if (jsonIdMatch) {
+    return jsonIdMatch[1];
+  }
+
+  return null;
 }
 
 /**

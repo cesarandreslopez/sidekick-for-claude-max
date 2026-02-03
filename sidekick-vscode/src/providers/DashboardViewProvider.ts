@@ -17,8 +17,9 @@
 import * as vscode from 'vscode';
 import type { SessionMonitor } from '../services/SessionMonitor';
 import type { QuotaService } from '../services/QuotaService';
-import type { QuotaState as DashboardQuotaState } from '../types/dashboard';
-import type { TokenUsage, SessionStats, ToolAnalytics, TimelineEvent, ToolCall } from '../types/claudeSession';
+import type { HistoricalDataService } from '../services/HistoricalDataService';
+import type { QuotaState as DashboardQuotaState, HistoricalSummary, HistoricalDataPoint, LatencyDisplay } from '../types/dashboard';
+import type { TokenUsage, SessionStats, ToolAnalytics, TimelineEvent, ToolCall, LatencyStats } from '../types/claudeSession';
 import type { DashboardMessage, WebviewMessage, DashboardState } from '../types/dashboard';
 import { ModelPricingService } from '../services/ModelPricingService';
 import { calculateLineChanges } from '../utils/lineChangeCalculator';
@@ -71,19 +72,31 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
   /** QuotaService for subscription quota data */
   private readonly _quotaService?: QuotaService;
 
+  /** HistoricalDataService for long-term analytics */
+  private _historicalDataService?: HistoricalDataService;
+
+  /** Current historical data range being displayed */
+  private _currentHistoricalRange: 'today' | 'week' | 'month' | 'all' = 'week';
+
+  /** Current drill-down level for historical data */
+  private _drillDownStack: Array<{ range: string; timestamp: string }> = [];
+
   /**
    * Creates a new DashboardViewProvider.
    *
    * @param _extensionUri - URI of the extension directory
    * @param _sessionMonitor - SessionMonitor instance for token events
    * @param quotaService - Optional QuotaService for subscription quota
+   * @param historicalDataService - Optional HistoricalDataService for long-term analytics
    */
   constructor(
     private readonly _extensionUri: vscode.Uri,
     private readonly _sessionMonitor: SessionMonitor,
-    quotaService?: QuotaService
+    quotaService?: QuotaService,
+    historicalDataService?: HistoricalDataService
   ) {
     this._quotaService = quotaService;
+    this._historicalDataService = historicalDataService;
     // Initialize empty state
     this._state = {
       totalInputTokens: 0,
@@ -123,6 +136,10 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
 
     this._disposables.push(
       this._sessionMonitor.onDiscoveryModeChange(inDiscoveryMode => this._handleDiscoveryModeChange(inDiscoveryMode))
+    );
+
+    this._disposables.push(
+      this._sessionMonitor.onLatencyUpdate(stats => this._handleLatencyUpdate(stats))
     );
 
     // Subscribe to quota updates if service available
@@ -241,6 +258,266 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
         log('Dashboard: user requested to clear custom path');
         vscode.commands.executeCommand('sidekick.clearCustomSessionPath');
         break;
+
+      case 'importHistoricalData':
+        log('Dashboard: user requested to import historical data');
+        vscode.commands.executeCommand('sidekick.importHistoricalData');
+        break;
+
+      case 'requestHistoricalData':
+        this._currentHistoricalRange = message.range;
+        this._drillDownStack = [];
+        this._sendHistoricalData(message.range);
+        break;
+
+      case 'drillDown':
+        this._drillDownStack.push({
+          range: message.currentRange,
+          timestamp: message.timestamp,
+        });
+        this._sendDrillDownData(message.timestamp, message.currentRange);
+        break;
+
+      case 'drillUp':
+        if (this._drillDownStack.length > 0) {
+          this._drillDownStack.pop();
+          if (this._drillDownStack.length === 0) {
+            this._sendHistoricalData(this._currentHistoricalRange);
+          } else {
+            const prev = this._drillDownStack[this._drillDownStack.length - 1];
+            this._sendDrillDownData(prev.timestamp, prev.range);
+          }
+        }
+        break;
+    }
+  }
+
+  /**
+   * Sends historical data for a given time range.
+   */
+  private _sendHistoricalData(range: 'today' | 'week' | 'month' | 'all'): void {
+    if (!this._historicalDataService) {
+      return;
+    }
+
+    this._postMessage({ type: 'historicalDataLoading', loading: true });
+
+    try {
+      const summary = this._buildHistoricalSummary(range);
+      this._postMessage({ type: 'updateHistoricalData', data: summary });
+    } finally {
+      this._postMessage({ type: 'historicalDataLoading', loading: false });
+    }
+  }
+
+  /**
+   * Builds historical summary for a given range.
+   */
+  private _buildHistoricalSummary(range: 'today' | 'week' | 'month' | 'all'): HistoricalSummary {
+    const dataPoints: HistoricalDataPoint[] = [];
+    let granularity: 'hourly' | 'daily' | 'monthly' = 'daily';
+
+    if (!this._historicalDataService) {
+      return {
+        range,
+        granularity,
+        dataPoints: [],
+        totals: { inputTokens: 0, outputTokens: 0, totalCost: 0, messageCount: 0, sessionCount: 0 },
+      };
+    }
+
+    const today = new Date();
+
+    switch (range) {
+      case 'today': {
+        granularity = 'hourly';
+        // For today, we need hourly data which requires session-level tracking
+        // For now, show the daily total since we don't track hourly
+        const todayData = this._historicalDataService.getTodayData();
+        if (todayData) {
+          dataPoints.push({
+            timestamp: todayData.date,
+            label: 'Today',
+            inputTokens: todayData.tokens.inputTokens,
+            outputTokens: todayData.tokens.outputTokens,
+            cacheWriteTokens: todayData.tokens.cacheWriteTokens,
+            cacheReadTokens: todayData.tokens.cacheReadTokens,
+            totalCost: todayData.totalCost,
+            messageCount: todayData.messageCount,
+            sessionCount: todayData.sessionCount,
+          });
+        }
+        break;
+      }
+
+      case 'week': {
+        granularity = 'daily';
+        const weekData = this._historicalDataService.getThisWeekData();
+        for (const day of weekData) {
+          const date = new Date(day.date);
+          dataPoints.push({
+            timestamp: day.date,
+            label: date.toLocaleDateString('en-US', { weekday: 'short' }),
+            inputTokens: day.tokens.inputTokens,
+            outputTokens: day.tokens.outputTokens,
+            cacheWriteTokens: day.tokens.cacheWriteTokens,
+            cacheReadTokens: day.tokens.cacheReadTokens,
+            totalCost: day.totalCost,
+            messageCount: day.messageCount,
+            sessionCount: day.sessionCount,
+          });
+        }
+        break;
+      }
+
+      case 'month': {
+        granularity = 'daily';
+        const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
+        const startDate = monthStart.toISOString().split('T')[0];
+        const endDate = today.toISOString().split('T')[0];
+        const monthDays = this._historicalDataService.getDailyData(startDate, endDate);
+        for (const day of monthDays) {
+          const date = new Date(day.date);
+          dataPoints.push({
+            timestamp: day.date,
+            label: date.getDate().toString(),
+            inputTokens: day.tokens.inputTokens,
+            outputTokens: day.tokens.outputTokens,
+            cacheWriteTokens: day.tokens.cacheWriteTokens,
+            cacheReadTokens: day.tokens.cacheReadTokens,
+            totalCost: day.totalCost,
+            messageCount: day.messageCount,
+            sessionCount: day.sessionCount,
+          });
+        }
+        break;
+      }
+
+      case 'all': {
+        granularity = 'monthly';
+        const allTime = this._historicalDataService.getAllTimeStats();
+        if (allTime.firstDate && allTime.lastDate) {
+          const startMonth = allTime.firstDate.substring(0, 7);
+          const endMonth = allTime.lastDate.substring(0, 7);
+          const months = this._historicalDataService.getMonthlyData(startMonth, endMonth);
+          for (const month of months) {
+            const [year, mon] = month.month.split('-');
+            const monthName = new Date(parseInt(year), parseInt(mon) - 1, 1)
+              .toLocaleDateString('en-US', { month: 'short', year: '2-digit' });
+            dataPoints.push({
+              timestamp: month.month,
+              label: monthName,
+              inputTokens: month.tokens.inputTokens,
+              outputTokens: month.tokens.outputTokens,
+              cacheWriteTokens: month.tokens.cacheWriteTokens,
+              cacheReadTokens: month.tokens.cacheReadTokens,
+              totalCost: month.totalCost,
+              messageCount: month.messageCount,
+              sessionCount: month.sessionCount,
+            });
+          }
+        }
+        break;
+      }
+    }
+
+    // Calculate totals
+    const totals = {
+      inputTokens: dataPoints.reduce((sum, d) => sum + d.inputTokens, 0),
+      outputTokens: dataPoints.reduce((sum, d) => sum + d.outputTokens, 0),
+      totalCost: dataPoints.reduce((sum, d) => sum + d.totalCost, 0),
+      messageCount: dataPoints.reduce((sum, d) => sum + d.messageCount, 0),
+      sessionCount: dataPoints.reduce((sum, d) => sum + d.sessionCount, 0),
+    };
+
+    return { range, granularity, dataPoints, totals };
+  }
+
+  /**
+   * Sends drill-down data for a specific timestamp.
+   */
+  private _sendDrillDownData(timestamp: string, currentRange: string): void {
+    if (!this._historicalDataService) {
+      return;
+    }
+
+    this._postMessage({ type: 'historicalDataLoading', loading: true });
+
+    try {
+      let summary: HistoricalSummary;
+
+      if (currentRange === 'all') {
+        // Drilling down from all-time (monthly) to daily for that month
+        const monthStart = timestamp + '-01';
+        const [year, month] = timestamp.split('-');
+        const lastDay = new Date(parseInt(year), parseInt(month), 0).getDate();
+        const monthEnd = `${timestamp}-${lastDay.toString().padStart(2, '0')}`;
+
+        const days = this._historicalDataService.getDailyData(monthStart, monthEnd);
+        const dataPoints: HistoricalDataPoint[] = days.map(day => {
+          const date = new Date(day.date);
+          return {
+            timestamp: day.date,
+            label: date.getDate().toString(),
+            inputTokens: day.tokens.inputTokens,
+            outputTokens: day.tokens.outputTokens,
+            cacheWriteTokens: day.tokens.cacheWriteTokens,
+            cacheReadTokens: day.tokens.cacheReadTokens,
+            totalCost: day.totalCost,
+            messageCount: day.messageCount,
+            sessionCount: day.sessionCount,
+          };
+        });
+
+        const totals = {
+          inputTokens: dataPoints.reduce((sum, d) => sum + d.inputTokens, 0),
+          outputTokens: dataPoints.reduce((sum, d) => sum + d.outputTokens, 0),
+          totalCost: dataPoints.reduce((sum, d) => sum + d.totalCost, 0),
+          messageCount: dataPoints.reduce((sum, d) => sum + d.messageCount, 0),
+          sessionCount: dataPoints.reduce((sum, d) => sum + d.sessionCount, 0),
+        };
+
+        summary = {
+          range: 'month',
+          granularity: 'daily',
+          dataPoints,
+          totals,
+        };
+      } else {
+        // Drilling down from daily to hourly - not supported yet
+        // Just return the day's data as a single point
+        const days = this._historicalDataService.getDailyData(timestamp, timestamp);
+        const dataPoints: HistoricalDataPoint[] = days.map(day => ({
+          timestamp: day.date,
+          label: 'Today',
+          inputTokens: day.tokens.inputTokens,
+          outputTokens: day.tokens.outputTokens,
+          cacheWriteTokens: day.tokens.cacheWriteTokens,
+          cacheReadTokens: day.tokens.cacheReadTokens,
+          totalCost: day.totalCost,
+          messageCount: day.messageCount,
+          sessionCount: day.sessionCount,
+        }));
+
+        const totals = dataPoints.length > 0 ? {
+          inputTokens: dataPoints[0].inputTokens,
+          outputTokens: dataPoints[0].outputTokens,
+          totalCost: dataPoints[0].totalCost,
+          messageCount: dataPoints[0].messageCount,
+          sessionCount: dataPoints[0].sessionCount,
+        } : { inputTokens: 0, outputTokens: 0, totalCost: 0, messageCount: 0, sessionCount: 0 };
+
+        summary = {
+          range: 'today',
+          granularity: 'hourly',
+          dataPoints,
+          totals,
+        };
+      }
+
+      this._postMessage({ type: 'updateHistoricalData', data: summary });
+    } finally {
+      this._postMessage({ type: 'historicalDataLoading', loading: false });
     }
   }
 
@@ -435,6 +712,67 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
   }
 
   /**
+   * Handles latency updates from SessionMonitor.
+   * @param stats - Updated latency statistics
+   */
+  private _handleLatencyUpdate(stats: LatencyStats): void {
+    const display = this._formatLatencyDisplay(stats);
+    this._state.latencyDisplay = display;
+    this._postMessage({ type: 'updateLatency', latency: display });
+  }
+
+  /**
+   * Formats latency statistics for display in the dashboard.
+   * @param stats - Raw latency statistics
+   * @returns Formatted display values
+   */
+  private _formatLatencyDisplay(stats: LatencyStats): LatencyDisplay {
+    if (stats.completedCycles === 0) {
+      return {
+        avgFirstToken: '-',
+        maxFirstToken: '-',
+        lastFirstToken: '-',
+        avgTotal: '-',
+        cycleCount: 0,
+        hasData: false
+      };
+    }
+
+    return {
+      avgFirstToken: this._formatDuration(stats.avgFirstTokenLatencyMs),
+      maxFirstToken: this._formatDuration(stats.maxFirstTokenLatencyMs),
+      lastFirstToken: stats.lastFirstTokenLatencyMs !== null
+        ? this._formatDuration(stats.lastFirstTokenLatencyMs)
+        : '-',
+      avgTotal: this._formatDuration(stats.avgTotalResponseTimeMs),
+      cycleCount: stats.completedCycles,
+      hasData: true
+    };
+  }
+
+  /**
+   * Formats a duration in milliseconds for display.
+   * < 1s -> "0.Xs"
+   * 1-60s -> "Xs"
+   * > 60s -> "Xm Ys"
+   *
+   * @param ms - Duration in milliseconds
+   * @returns Formatted duration string
+   */
+  private _formatDuration(ms: number): string {
+    const seconds = ms / 1000;
+    if (seconds < 1) {
+      return `${seconds.toFixed(1)}s`;
+    } else if (seconds < 60) {
+      return `${Math.round(seconds)}s`;
+    } else {
+      const minutes = Math.floor(seconds / 60);
+      const remainingSeconds = Math.round(seconds % 60);
+      return remainingSeconds > 0 ? `${minutes}m ${remainingSeconds}s` : `${minutes}m`;
+    }
+  }
+
+  /**
    * Syncs state from SessionMonitor stats.
    */
   private _syncFromSessionMonitor(): void {
@@ -502,6 +840,11 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
 
     // Compute file change summary
     this._state.fileChangeSummary = this._computeFileChangeSummary(stats.toolCalls);
+
+    // Sync latency stats
+    if (stats.latencyStats) {
+      this._state.latencyDisplay = this._formatLatencyDisplay(stats.latencyStats);
+    }
   }
 
   /**
@@ -545,6 +888,16 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
    */
   private _sendStateToWebview(): void {
     this._postMessage({ type: 'updateStats', state: this._state });
+  }
+
+  /**
+   * Public method to refresh historical data display.
+   *
+   * Called after retroactive import completes to update the History tab.
+   */
+  refresh(): void {
+    // Re-send historical data to the webview
+    this._sendHistoricalData(this._currentHistoricalRange);
   }
 
   /**
@@ -688,6 +1041,379 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
     .status.inactive {
       background: var(--vscode-badge-background);
       color: var(--vscode-badge-foreground);
+    }
+
+    /* Tab navigation */
+    .tab-container {
+      display: flex;
+      gap: 0;
+      margin-bottom: 16px;
+      border-bottom: 1px solid var(--vscode-panel-border);
+    }
+
+    .tab-btn {
+      flex: 1;
+      padding: 8px 12px;
+      font-size: 12px;
+      font-weight: 500;
+      background: transparent;
+      color: var(--vscode-descriptionForeground);
+      border: none;
+      border-bottom: 2px solid transparent;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .tab-btn:hover {
+      color: var(--vscode-foreground);
+      background: var(--vscode-list-hoverBackground);
+    }
+
+    .tab-btn.active {
+      color: var(--vscode-foreground);
+      border-bottom-color: var(--vscode-textLink-foreground);
+    }
+
+    .tab-content {
+      display: none;
+    }
+
+    .tab-content.active {
+      display: block;
+    }
+
+    /* History tab styles */
+    .history-controls {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 12px;
+      flex-wrap: wrap;
+    }
+
+    .range-selector {
+      display: flex;
+      gap: 0;
+      border-radius: 4px;
+      overflow: hidden;
+      border: 1px solid var(--vscode-input-border);
+    }
+
+    .range-btn {
+      padding: 6px 10px;
+      font-size: 11px;
+      background: var(--vscode-input-background);
+      color: var(--vscode-foreground);
+      border: none;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+
+    .range-btn:not(:last-child) {
+      border-right: 1px solid var(--vscode-input-border);
+    }
+
+    .range-btn:hover {
+      background: var(--vscode-list-hoverBackground);
+    }
+
+    .range-btn.active {
+      background: var(--vscode-button-background);
+      color: var(--vscode-button-foreground);
+    }
+
+    .metric-select {
+      padding: 6px 8px;
+      font-size: 11px;
+      background: var(--vscode-dropdown-background);
+      color: var(--vscode-dropdown-foreground);
+      border: 1px solid var(--vscode-dropdown-border);
+      border-radius: 4px;
+      cursor: pointer;
+    }
+
+    .history-chart {
+      height: 180px;
+      margin-bottom: 16px;
+    }
+
+    .breadcrumb {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 12px;
+      font-size: 11px;
+    }
+
+    .breadcrumb-back {
+      color: var(--vscode-textLink-foreground);
+      cursor: pointer;
+    }
+
+    .breadcrumb-back:hover {
+      text-decoration: underline;
+    }
+
+    .breadcrumb-current {
+      color: var(--vscode-descriptionForeground);
+    }
+
+    .history-summary {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 8px;
+      margin-bottom: 16px;
+    }
+
+    .history-stat {
+      background: var(--vscode-input-background);
+      border: 1px solid var(--vscode-input-border);
+      border-radius: 4px;
+      padding: 8px;
+      text-align: center;
+    }
+
+    .history-stat .stat-value {
+      font-size: 18px;
+      font-weight: 600;
+      font-family: var(--vscode-editor-font-family);
+    }
+
+    .history-stat .stat-label {
+      font-size: 10px;
+      color: var(--vscode-descriptionForeground);
+      margin-top: 2px;
+    }
+
+    .history-empty {
+      text-align: center;
+      padding: 24px 12px;
+      color: var(--vscode-descriptionForeground);
+    }
+
+    .history-empty p {
+      margin-bottom: 12px;
+    }
+
+    .history-empty .hint {
+      font-size: 11px;
+      margin-top: 8px;
+      opacity: 0.8;
+    }
+
+    .import-btn {
+      padding: 8px 16px;
+      font-size: 12px;
+      background: var(--vscode-button-background);
+      color: var(--vscode-button-foreground);
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+
+    .import-btn:hover {
+      background: var(--vscode-button-hoverBackground);
+    }
+
+    .import-btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    .history-loading {
+      text-align: center;
+      padding: 24px 12px;
+      color: var(--vscode-descriptionForeground);
+    }
+
+    /* Metric color variables */
+    :root {
+      --metric-cost: var(--vscode-charts-green, #4caf50);
+      --metric-input: var(--vscode-charts-blue, #2196f3);
+      --metric-output: var(--vscode-charts-purple, #9c27b0);
+      --metric-cache-write: var(--vscode-charts-orange, #ff9800);
+      --metric-cache-read: var(--vscode-charts-yellow, #ffeb3b);
+      --metric-messages: var(--vscode-textLink-foreground);
+    }
+
+    /* Metric toggle buttons for session tab */
+    .metric-toggles {
+      display: flex;
+      gap: 4px;
+      margin-bottom: 12px;
+    }
+
+    .metric-btn {
+      flex: 1;
+      padding: 6px 8px;
+      font-size: 11px;
+      background: var(--vscode-input-background);
+      color: var(--vscode-descriptionForeground);
+      border: 1px solid var(--vscode-input-border);
+      border-radius: 3px;
+      cursor: pointer;
+      transition: all 0.2s;
+      text-align: center;
+    }
+
+    .metric-btn:hover {
+      background: var(--vscode-list-hoverBackground);
+      color: var(--vscode-foreground);
+    }
+
+    .metric-btn.active {
+      background: var(--vscode-button-background);
+      color: var(--vscode-button-foreground);
+      border-color: var(--vscode-button-background);
+    }
+
+    /* Primary metric display */
+    .primary-metric-display {
+      background: var(--vscode-input-background);
+      border: 1px solid var(--vscode-input-border);
+      border-radius: 4px;
+      padding: 16px;
+      text-align: center;
+      margin-bottom: 16px;
+    }
+
+    .primary-metric-display .metric-value {
+      font-size: 32px;
+      font-weight: 700;
+      font-family: var(--vscode-editor-font-family);
+      color: var(--metric-cost);
+    }
+
+    .primary-metric-display .metric-subtitle {
+      font-size: 11px;
+      color: var(--vscode-descriptionForeground);
+      margin-top: 4px;
+    }
+
+    .primary-metric-display[data-metric="cost"] .metric-value { color: var(--metric-cost); }
+    .primary-metric-display[data-metric="input"] .metric-value { color: var(--metric-input); }
+    .primary-metric-display[data-metric="output"] .metric-value { color: var(--metric-output); }
+    .primary-metric-display[data-metric="cache-write"] .metric-value { color: var(--metric-cache-write); }
+    .primary-metric-display[data-metric="cache-read"] .metric-value { color: var(--metric-cache-read); }
+    .primary-metric-display[data-metric="messages"] .metric-value { color: var(--metric-messages); }
+
+    /* Inline stats row */
+    .inline-stats {
+      display: flex;
+      justify-content: space-around;
+      gap: 8px;
+      margin-bottom: 16px;
+      font-size: 11px;
+    }
+
+    .inline-stat {
+      text-align: center;
+    }
+
+    .inline-stat .stat-value {
+      font-weight: 600;
+      font-family: var(--vscode-editor-font-family);
+    }
+
+    .inline-stat .stat-label {
+      color: var(--vscode-descriptionForeground);
+      font-size: 10px;
+    }
+
+    /* Latency section */
+    .latency-section {
+      margin-bottom: 16px;
+      padding: 8px 12px;
+      background: var(--vscode-input-background);
+      border-radius: 4px;
+      border: 1px solid var(--vscode-input-border);
+    }
+
+    .latency-section .section-title {
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      color: var(--vscode-descriptionForeground);
+      margin-bottom: 6px;
+      letter-spacing: 0.5px;
+    }
+
+    .latency-display {
+      font-size: 12px;
+    }
+
+    .latency-main {
+      margin-bottom: 4px;
+    }
+
+    .latency-label {
+      color: var(--vscode-descriptionForeground);
+    }
+
+    .latency-value {
+      font-weight: 600;
+      font-family: var(--vscode-editor-font-family);
+      margin: 0 4px;
+    }
+
+    .latency-stats {
+      color: var(--vscode-descriptionForeground);
+      font-size: 11px;
+    }
+
+    .latency-secondary {
+      font-size: 11px;
+      color: var(--vscode-descriptionForeground);
+    }
+
+    .latency-value-secondary {
+      font-family: var(--vscode-editor-font-family);
+    }
+
+    .latency-count {
+      color: var(--vscode-descriptionForeground);
+    }
+
+    /* Progressive disclosure */
+    .details-section {
+      border: 1px solid var(--vscode-panel-border);
+      border-radius: 4px;
+      margin-bottom: 16px;
+    }
+
+    .details-toggle {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      width: 100%;
+      padding: 8px 12px;
+      background: var(--vscode-input-background);
+      border: none;
+      cursor: pointer;
+      font-size: 12px;
+      color: var(--vscode-foreground);
+    }
+
+    .details-toggle:hover {
+      background: var(--vscode-list-hoverBackground);
+    }
+
+    .toggle-icon {
+      transition: transform 0.2s;
+    }
+
+    .details-section.expanded .toggle-icon {
+      transform: rotate(90deg);
+    }
+
+    .details-content {
+      display: none;
+      padding: 12px;
+      border-top: 1px solid var(--vscode-panel-border);
+    }
+
+    .details-section.expanded .details-content {
+      display: block;
     }
 
     .section {
@@ -1421,153 +2147,250 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
     <button class="browse-btn" id="browse-folders" title="Browse all Claude session folders">Browse...</button>
   </div>
 
-  <div id="content">
-    <div class="empty-state">
-      <p>No active Claude Code session detected.</p>
-      <p>Start a session to see analytics.</p>
+  <div class="tab-container">
+    <button class="tab-btn active" data-tab="session">Session</button>
+    <button class="tab-btn" data-tab="history">History</button>
+  </div>
+
+  <div id="session-tab" class="tab-content active">
+    <div id="content">
+      <div class="empty-state">
+        <p>No active Claude Code session detected.</p>
+        <p>Start a session to see analytics.</p>
+      </div>
+    </div>
+
+    <div id="dashboard" style="display: none;">
+      <div class="metric-toggles">
+        <button class="metric-btn active" data-metric="quota">Quota</button>
+        <button class="metric-btn" data-metric="cost">Cost</button>
+        <button class="metric-btn" data-metric="tokens">Tokens</button>
+        <button class="metric-btn" data-metric="cache">Cache</button>
+      </div>
+
+      <div class="gauge-row" id="gauge-row">
+        <div class="gauge-row-item context-item" title="How much of Claude's 200K token context window is currently in use">
+          <div class="section-title">Context Window</div>
+          <div class="context-gauge" title="Green: &lt;50% | Orange: 50-79% | Red: ≥80%. When full, older context is summarized.">
+            <canvas id="contextChart"></canvas>
+            <span class="context-percent" id="context-percent">0%</span>
+          </div>
+        </div>
+
+        <div class="gauge-row-item quota-item quota-section" id="quota-section" title="Claude Max subscription usage limits">
+          <div class="section-title">Subscription Quota</div>
+          <div id="quota-content">
+            <div class="quota-grid">
+              <div class="quota-card" title="Usage in the last 5 hours">
+                <div class="quota-label">5-Hour</div>
+                <div class="quota-gauge">
+                  <canvas id="quota5hChart"></canvas>
+                  <span class="quota-percent" id="quota-5h-percent">0%</span>
+                </div>
+                <div class="quota-reset" id="quota-5h-reset">-</div>
+                <div class="quota-projection" id="quota-5h-projection"></div>
+              </div>
+              <div class="quota-card" title="Usage in the last 7 days">
+                <div class="quota-label">7-Day</div>
+                <div class="quota-gauge">
+                  <canvas id="quota7dChart"></canvas>
+                  <span class="quota-percent" id="quota-7d-percent">0%</span>
+                </div>
+                <div class="quota-reset" id="quota-7d-reset">-</div>
+                <div class="quota-projection" id="quota-7d-projection"></div>
+              </div>
+            </div>
+          </div>
+          <div class="quota-error" id="quota-error" style="display: none;"></div>
+        </div>
+      </div>
+
+      <div class="primary-metric-display" data-metric="cost" id="primary-metric-display" style="display: none;">
+        <div class="metric-value" id="primary-metric-value">$0.00</div>
+        <div class="metric-subtitle" id="primary-metric-subtitle">Estimated session cost</div>
+      </div>
+
+      <div class="inline-stats">
+        <div class="inline-stat">
+          <div class="stat-value" id="inline-duration">0m</div>
+          <div class="stat-label">Duration</div>
+        </div>
+        <div class="inline-stat">
+          <div class="stat-value" id="inline-burn-rate">0</div>
+          <div class="stat-label">tok/min</div>
+        </div>
+        <div class="inline-stat">
+          <div class="stat-value" id="inline-api-calls">0</div>
+          <div class="stat-label">API calls</div>
+        </div>
+      </div>
+
+      <div class="latency-section" id="latency-section" style="display: none;">
+        <div class="section-title section-title-with-info">
+          Response Times
+          <span class="info-icon">?<div class="tooltip">
+            <p>How long Claude takes to respond to your prompts.</p>
+            <p><strong>First Token:</strong> Time until streaming begins (thinking time)</p>
+            <p><strong>Total:</strong> Time for complete response</p>
+          </div></span>
+        </div>
+        <div class="latency-display">
+          <div class="latency-main">
+            <span class="latency-label">First Token:</span>
+            <span class="latency-value" id="latency-last">-</span>
+            <span class="latency-stats">(avg <span id="latency-avg">-</span> · max <span id="latency-max">-</span>)</span>
+          </div>
+          <div class="latency-secondary">
+            <span class="latency-label">Total:</span>
+            <span class="latency-value-secondary">avg <span id="latency-total-avg">-</span></span>
+            <span class="latency-count">· <span id="latency-count">0</span> requests</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="details-section" id="details-section">
+        <button class="details-toggle" id="details-toggle">
+          <span class="toggle-icon">▶</span> Show Details
+        </button>
+        <div class="details-content">
+          <div class="section" id="file-changes-section" style="display: none;">
+            <div class="section-title section-title-with-info">
+              File Changes
+              <span class="info-icon">?<div class="tooltip">
+                <p>Summary of code modifications made during this session.</p>
+                <p><strong>Files:</strong> Number of unique files edited</p>
+                <p><strong>+/-:</strong> Lines added and removed</p>
+              </div></span>
+            </div>
+            <div class="file-changes-display" title="Number of unique files modified with line additions and deletions">
+              <span class="file-count" id="file-count">0 files</span>
+              <span class="separator">|</span>
+              <span class="additions" id="file-additions">+0</span>
+              <span class="separator">/</span>
+              <span class="deletions" id="file-deletions">-0</span>
+              <span class="lines-label">lines</span>
+            </div>
+          </div>
+
+          <div class="section">
+            <div class="section-title section-title-with-info">
+              Model Breakdown
+              <span class="info-icon">?<div class="tooltip">
+                <p>Shows which Claude models have been used in this session.</p>
+                <p><strong>Opus:</strong> Highest quality, best for complex tasks</p>
+                <p><strong>Sonnet:</strong> Balanced speed and quality</p>
+                <p><strong>Haiku:</strong> Fast and efficient for simple tasks</p>
+              </div></span>
+            </div>
+            <div class="model-list" id="model-list">
+              <!-- Model items will be inserted here -->
+            </div>
+          </div>
+
+          <div class="section">
+            <div class="section-title section-title-with-info">
+              Tool Analytics
+              <span class="info-icon">?<div class="tooltip">
+                <p>Tools invoked by Claude during this session.</p>
+                <p><strong>Count:</strong> Number of times each tool was called</p>
+                <p><strong>Success rate:</strong> Percentage of successful executions</p>
+                <p><strong>Avg time:</strong> Average execution duration</p>
+              </div></span>
+            </div>
+            <div class="tool-list" id="tool-list">
+              <div class="tool-item"><span class="tool-name">No tools used yet</span></div>
+            </div>
+          </div>
+
+          <div class="section">
+            <div class="section-title section-title-with-info">
+              Activity Timeline
+              <span class="info-icon">?<div class="tooltip">
+                <p>Chronological log of session events.</p>
+                <p><strong>User prompts:</strong> Messages you sent</p>
+                <p><strong>Tool calls:</strong> Actions Claude performed</p>
+                <p><strong>Results:</strong> Outcomes of tool executions</p>
+              </div></span>
+            </div>
+            <div class="timeline-list" id="timeline-list">
+              <div class="timeline-item">
+                <span class="time">--:--</span>
+                <span class="description">No activity yet</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="section" id="error-section" style="display: none;">
+            <div class="section-title section-title-with-info">
+              Errors
+              <span class="info-icon">?<div class="tooltip">
+                <p>Errors encountered during tool execution.</p>
+                <p>Click on an error type to expand and see details.</p>
+                <p>Common causes: file not found, permission denied, syntax errors.</p>
+              </div></span>
+            </div>
+            <div class="error-list" id="error-list"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="last-updated">
+        Last updated: <span id="last-updated">-</span>
+      </div>
     </div>
   </div>
 
-  <div id="dashboard" style="display: none;">
-    <div class="section" title="Total tokens used in this session, broken down by type">
-      <div class="section-title section-title-with-info">
-        Token Usage
-        <span class="info-icon">?<div class="tooltip">
-          <p><strong>Input:</strong> Tokens sent TO Claude (your messages, file contents, system prompts)</p>
-          <p><strong>Output:</strong> Tokens generated BY Claude (responses, code)</p>
-          <p><strong>Cache Write/Read:</strong> Prompt caching optimization—reuses context between messages</p>
-          <p>Only assistant responses contribute token usage. A typical response: 500-2,000 tokens.</p>
-        </div></span>
+  <div id="history-tab" class="tab-content">
+    <div class="history-controls">
+      <div class="range-selector">
+        <button class="range-btn" data-range="today">Today</button>
+        <button class="range-btn active" data-range="week">This Week</button>
+        <button class="range-btn" data-range="month">This Month</button>
+        <button class="range-btn" data-range="all">All Time</button>
       </div>
-      <div class="token-grid">
-        <div class="token-card" title="Tokens sent to Claude (your messages, system prompts, file contents)">
-          <div class="label">Input</div>
-          <div class="value" id="input-tokens">0</div>
-        </div>
-        <div class="token-card" title="Tokens generated by Claude (responses, code, explanations)">
-          <div class="label">Output</div>
-          <div class="value" id="output-tokens">0</div>
-        </div>
-        <div class="token-card" title="Tokens written to cache for reuse in future messages">
-          <div class="label">Cache Write</div>
-          <div class="value" id="cache-write-tokens">0</div>
-        </div>
-        <div class="token-card" title="Tokens read from cache instead of being re-sent (saves time and quota)">
-          <div class="label">Cache Read</div>
-          <div class="value" id="cache-read-tokens">0</div>
-        </div>
+      <select class="metric-select" id="history-metric-select">
+        <option value="tokens">Tokens</option>
+        <option value="cost">Cost ($)</option>
+        <option value="messages">Messages</option>
+      </select>
+    </div>
+
+    <div class="chart-container history-chart">
+      <canvas id="historyChart"></canvas>
+    </div>
+
+    <div class="breadcrumb" id="drill-breadcrumb" style="display: none;">
+      <span class="breadcrumb-back" id="drill-up">← Back</span>
+      <span class="breadcrumb-current" id="drill-label"></span>
+    </div>
+
+    <div class="history-summary" id="history-summary">
+      <div class="history-stat">
+        <div class="stat-value" id="history-total-tokens">0</div>
+        <div class="stat-label">Total Tokens</div>
+      </div>
+      <div class="history-stat">
+        <div class="stat-value" id="history-total-cost">$0.00</div>
+        <div class="stat-label">Total Cost</div>
+      </div>
+      <div class="history-stat">
+        <div class="stat-value" id="history-sessions">0</div>
+        <div class="stat-label">Sessions</div>
+      </div>
+      <div class="history-stat">
+        <div class="stat-value" id="history-messages">0</div>
+        <div class="stat-label">Messages</div>
       </div>
     </div>
 
-    <div class="section" id="file-changes-section" style="display: none;" title="Files modified and lines changed during this session">
-      <div class="section-title">File Changes</div>
-      <div class="file-changes-display" title="Number of unique files modified with line additions and deletions">
-        <span class="file-count" id="file-count">0 files</span>
-        <span class="separator">|</span>
-        <span class="additions" id="file-additions">+0</span>
-        <span class="separator">/</span>
-        <span class="deletions" id="file-deletions">-0</span>
-        <span class="lines-label">lines</span>
-      </div>
+    <div class="history-empty" id="history-empty" style="display: none;">
+      <p>No historical data available.</p>
+      <button class="import-btn" id="import-historical-btn">Import Historical Data</button>
+      <p class="hint">Scans ~/.claude/projects/ for past sessions</p>
     </div>
 
-    <div class="gauge-row" id="gauge-row">
-      <div class="gauge-row-item context-item" title="How much of Claude's 200K token context window is currently in use">
-        <div class="section-title">Context Window</div>
-        <div class="context-gauge" title="Green: &lt;50% | Orange: 50-79% | Red: ≥80%. When full, older context is summarized.">
-          <canvas id="contextChart"></canvas>
-          <span class="context-percent" id="context-percent">0%</span>
-        </div>
-      </div>
-
-      <div class="gauge-row-item quota-item quota-section" id="quota-section" title="Claude Max subscription usage limits">
-        <div class="section-title">Subscription Quota</div>
-        <div id="quota-content">
-          <div class="quota-grid">
-            <div class="quota-card" title="Usage in the last 5 hours">
-              <div class="quota-label">5-Hour</div>
-              <div class="quota-gauge">
-                <canvas id="quota5hChart"></canvas>
-                <span class="quota-percent" id="quota-5h-percent">0%</span>
-              </div>
-              <div class="quota-reset" id="quota-5h-reset">-</div>
-              <div class="quota-projection" id="quota-5h-projection"></div>
-            </div>
-            <div class="quota-card" title="Usage in the last 7 days">
-              <div class="quota-label">7-Day</div>
-              <div class="quota-gauge">
-                <canvas id="quota7dChart"></canvas>
-                <span class="quota-percent" id="quota-7d-percent">0%</span>
-              </div>
-              <div class="quota-reset" id="quota-7d-reset">-</div>
-              <div class="quota-projection" id="quota-7d-projection"></div>
-            </div>
-          </div>
-        </div>
-        <div class="quota-error" id="quota-error" style="display: none;"></div>
-      </div>
-    </div>
-
-    <div class="section context-bar-fallback" style="display: none;">
-      <div class="section-title">Context Window</div>
-      <div class="context-bar">
-        <div class="label-row">
-          <span>Usage</span>
-          <span id="context-percent">0%</span>
-        </div>
-        <div class="bar">
-          <div class="bar-fill" id="context-fill" style="width: 0%"></div>
-        </div>
-      </div>
-    </div>
-
-    <div class="section" title="Recent events in chronological order">
-      <div class="section-title">Activity Timeline</div>
-      <div class="timeline-list" id="timeline-list" title="Shows user prompts, tool calls, and their results">
-        <div class="timeline-item">
-          <span class="time">--:--</span>
-          <span class="description">No activity yet</span>
-        </div>
-      </div>
-    </div>
-
-    <div class="section" title="How quickly tokens are being consumed in this session">
-      <div class="section-title">Usage Rate</div>
-      <div class="burn-rate" title="Average tokens per minute over the last 5 minutes of activity">
-        <span class="label">Burn Rate</span>
-        <span class="value" id="burn-rate">0</span>
-        <span class="unit">tokens/min</span>
-      </div>
-    </div>
-
-    <div class="section" title="How long this Claude Code session has been running">
-      <div class="section-title">Session Duration</div>
-      <div class="session-timer" title="Time since the first message in this session">
-        <span class="value" id="session-timer">0m</span>
-      </div>
-    </div>
-
-    <div class="section" title="Which Claude models have been used and their token consumption">
-      <div class="section-title">Model Breakdown</div>
-      <div class="model-list" id="model-list" title="Opus: highest quality | Sonnet: balanced | Haiku: fast and efficient">
-        <!-- Model items will be inserted here -->
-      </div>
-    </div>
-
-    <div class="section" title="Tools invoked by Claude during this session">
-      <div class="section-title">Tool Analytics</div>
-      <div class="tool-list" id="tool-list" title="Shows tool usage count, success rate, and average execution time">
-        <div class="tool-item"><span class="tool-name">No tools used yet</span></div>
-      </div>
-    </div>
-
-    <div class="section" id="error-section" style="display: none;" title="Errors encountered during tool execution">
-      <div class="section-title">Errors</div>
-      <div class="error-list" id="error-list" title="Click to expand error details"></div>
-    </div>
-
-    <div class="last-updated">
-      Last updated: <span id="last-updated">-</span>
+    <div class="history-loading" id="history-loading" style="display: none;">
+      Loading historical data...
     </div>
   </div>
 
@@ -1593,6 +2416,280 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
       const customPathIndicator = document.getElementById('custom-path-indicator');
       const customPathText = document.getElementById('custom-path-text');
       const resetCustomPath = document.getElementById('reset-custom-path');
+
+      // Tab elements
+      const tabBtns = document.querySelectorAll('.tab-btn');
+      const tabContents = document.querySelectorAll('.tab-content');
+
+      // Metric toggle elements
+      const metricBtns = document.querySelectorAll('.metric-btn');
+      const primaryMetricDisplay = document.getElementById('primary-metric-display');
+      const primaryMetricValue = document.getElementById('primary-metric-value');
+      const primaryMetricSubtitle = document.getElementById('primary-metric-subtitle');
+      const gaugeRow = document.getElementById('gauge-row');
+
+      // Details section elements
+      const detailsSection = document.getElementById('details-section');
+      const detailsToggle = document.getElementById('details-toggle');
+
+      // Inline stats elements
+      const inlineDuration = document.getElementById('inline-duration');
+      const inlineBurnRate = document.getElementById('inline-burn-rate');
+      const inlineApiCalls = document.getElementById('inline-api-calls');
+
+      // History tab elements
+      const rangeBtns = document.querySelectorAll('.range-btn');
+      const historyMetricSelect = document.getElementById('history-metric-select');
+      const drillBreadcrumb = document.getElementById('drill-breadcrumb');
+      const drillUpBtn = document.getElementById('drill-up');
+      const drillLabel = document.getElementById('drill-label');
+      const historyEmpty = document.getElementById('history-empty');
+      const historyLoading = document.getElementById('history-loading');
+      const historySummary = document.getElementById('history-summary');
+
+      // Current state
+      let currentMetric = 'quota';
+      let currentRange = 'week';
+      let currentHistoryData = null;
+      let sessionState = {
+        totalInputTokens: 0,
+        totalOutputTokens: 0,
+        totalCacheWriteTokens: 0,
+        totalCacheReadTokens: 0,
+        totalCost: 0,
+        messageCount: 0,
+        burnRate: 0,
+        sessionDuration: '0m'
+      };
+
+      // Tab switching
+      tabBtns.forEach(function(btn) {
+        btn.addEventListener('click', function() {
+          var tab = btn.getAttribute('data-tab');
+
+          tabBtns.forEach(function(b) { b.classList.remove('active'); });
+          tabContents.forEach(function(c) { c.classList.remove('active'); });
+
+          btn.classList.add('active');
+          document.getElementById(tab + '-tab').classList.add('active');
+
+          // Request historical data when switching to history tab
+          if (tab === 'history') {
+            vscode.postMessage({ type: 'requestHistoricalData', range: currentRange, metric: 'tokens' });
+          }
+        });
+      });
+
+      // Metric toggle switching
+      metricBtns.forEach(function(btn) {
+        btn.addEventListener('click', function() {
+          currentMetric = btn.getAttribute('data-metric');
+          metricBtns.forEach(function(b) { b.classList.remove('active'); });
+          btn.classList.add('active');
+          updatePrimaryMetric();
+        });
+      });
+
+      // Details toggle
+      if (detailsToggle) {
+        detailsToggle.addEventListener('click', function() {
+          detailsSection.classList.toggle('expanded');
+          var icon = detailsToggle.querySelector('.toggle-icon');
+          var text = detailsSection.classList.contains('expanded') ? 'Hide Details' : 'Show Details';
+          detailsToggle.innerHTML = '<span class="toggle-icon">' + icon.textContent + '</span> ' + text;
+        });
+      }
+
+      // History range buttons
+      rangeBtns.forEach(function(btn) {
+        btn.addEventListener('click', function() {
+          currentRange = btn.getAttribute('data-range');
+          rangeBtns.forEach(function(b) { b.classList.remove('active'); });
+          btn.classList.add('active');
+          vscode.postMessage({ type: 'requestHistoricalData', range: currentRange, metric: historyMetricSelect.value });
+        });
+      });
+
+      // History metric selector
+      if (historyMetricSelect) {
+        historyMetricSelect.addEventListener('change', function() {
+          if (currentHistoryData) {
+            updateHistoryChart(currentHistoryData);
+          }
+        });
+      }
+
+      // Drill up button
+      if (drillUpBtn) {
+        drillUpBtn.addEventListener('click', function() {
+          vscode.postMessage({ type: 'drillUp' });
+        });
+      }
+
+      /**
+       * Updates the primary metric display based on selected metric.
+       */
+      function updatePrimaryMetric() {
+        if (!primaryMetricDisplay || !primaryMetricValue || !primaryMetricSubtitle || !gaugeRow) return;
+
+        // Toggle between gauge view and numeric metric view
+        if (currentMetric === 'quota') {
+          gaugeRow.style.display = 'flex';
+          primaryMetricDisplay.style.display = 'none';
+        } else {
+          gaugeRow.style.display = 'none';
+          primaryMetricDisplay.style.display = 'block';
+          primaryMetricDisplay.setAttribute('data-metric', currentMetric);
+
+          switch (currentMetric) {
+            case 'cost':
+              primaryMetricValue.textContent = formatCost(sessionState.totalCost);
+              primaryMetricSubtitle.textContent = 'Estimated session cost';
+              break;
+            case 'tokens':
+              var totalTokens = sessionState.totalInputTokens + sessionState.totalOutputTokens;
+              primaryMetricValue.textContent = formatNumber(totalTokens);
+              primaryMetricSubtitle.textContent = formatNumber(sessionState.totalInputTokens) + ' in / ' + formatNumber(sessionState.totalOutputTokens) + ' out';
+              break;
+            case 'cache':
+              var totalCache = sessionState.totalCacheWriteTokens + sessionState.totalCacheReadTokens;
+              primaryMetricValue.textContent = formatNumber(totalCache);
+              primaryMetricSubtitle.textContent = formatNumber(sessionState.totalCacheWriteTokens) + ' write / ' + formatNumber(sessionState.totalCacheReadTokens) + ' read';
+              break;
+          }
+        }
+      }
+
+      /**
+       * Updates inline stats display.
+       */
+      function updateInlineStats() {
+        if (inlineDuration) inlineDuration.textContent = sessionState.sessionDuration;
+        if (inlineBurnRate) inlineBurnRate.textContent = formatNumber(sessionState.burnRate);
+        if (inlineApiCalls) inlineApiCalls.textContent = formatNumber(sessionState.messageCount);
+      }
+
+      // History chart
+      let historyChart = null;
+
+      /**
+       * Initializes the history bar chart.
+       */
+      function initHistoryChart() {
+        var canvas = document.getElementById('historyChart');
+        if (!canvas || !window.Chart) return;
+
+        var ctx = canvas.getContext('2d');
+        if (!ctx) return;
+
+        historyChart = new Chart(ctx, {
+          type: 'bar',
+          data: {
+            labels: [],
+            datasets: [{
+              label: 'Tokens',
+              data: [],
+              backgroundColor: 'rgba(75, 192, 192, 0.7)',
+              borderColor: 'rgb(75, 192, 192)',
+              borderWidth: 1
+            }]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            onClick: function(event, elements) {
+              if (elements.length > 0 && currentHistoryData) {
+                var index = elements[0].index;
+                var dataPoint = currentHistoryData.dataPoints[index];
+                if (dataPoint && (currentRange === 'all' || currentRange === 'month' || currentRange === 'week')) {
+                  vscode.postMessage({
+                    type: 'drillDown',
+                    timestamp: dataPoint.timestamp,
+                    currentRange: currentRange
+                  });
+                }
+              }
+            },
+            plugins: {
+              legend: { display: false },
+              tooltip: {
+                callbacks: {
+                  label: function(context) {
+                    var metric = historyMetricSelect ? historyMetricSelect.value : 'tokens';
+                    if (metric === 'cost') {
+                      return formatCost(context.raw);
+                    }
+                    return formatNumber(context.raw);
+                  }
+                }
+              }
+            },
+            scales: {
+              y: {
+                beginAtZero: true,
+                ticks: {
+                  callback: function(value) {
+                    var metric = historyMetricSelect ? historyMetricSelect.value : 'tokens';
+                    if (metric === 'cost') {
+                      return formatCost(value);
+                    }
+                    return formatNumber(value);
+                  }
+                }
+              }
+            }
+          }
+        });
+      }
+
+      /**
+       * Updates the history chart with new data.
+       */
+      function updateHistoryChart(data) {
+        currentHistoryData = data;
+
+        if (!historyChart) {
+          initHistoryChart();
+        }
+        if (!historyChart) return;
+
+        var metric = historyMetricSelect ? historyMetricSelect.value : 'tokens';
+        var labels = data.dataPoints.map(function(d) { return d.label; });
+        var values = data.dataPoints.map(function(d) {
+          switch (metric) {
+            case 'cost': return d.totalCost;
+            case 'messages': return d.messageCount;
+            default: return d.inputTokens + d.outputTokens;
+          }
+        });
+
+        var color = metric === 'cost' ? 'rgb(76, 175, 80)' :
+                    metric === 'messages' ? 'rgb(33, 150, 243)' :
+                    'rgb(75, 192, 192)';
+
+        historyChart.data.labels = labels;
+        historyChart.data.datasets[0].data = values;
+        historyChart.data.datasets[0].backgroundColor = color.replace('rgb', 'rgba').replace(')', ', 0.7)');
+        historyChart.data.datasets[0].borderColor = color;
+        historyChart.data.datasets[0].label = metric === 'cost' ? 'Cost' : metric === 'messages' ? 'Messages' : 'Tokens';
+        historyChart.update();
+
+        // Update summary
+        if (historySummary) {
+          document.getElementById('history-total-tokens').textContent = formatNumber(data.totals.inputTokens + data.totals.outputTokens);
+          document.getElementById('history-total-cost').textContent = formatCost(data.totals.totalCost);
+          document.getElementById('history-sessions').textContent = formatNumber(data.totals.sessionCount);
+          document.getElementById('history-messages').textContent = formatNumber(data.totals.messageCount);
+        }
+
+        // Show/hide empty state
+        if (historyEmpty) {
+          historyEmpty.style.display = data.dataPoints.length === 0 ? 'block' : 'none';
+        }
+        if (historySummary) {
+          historySummary.style.display = data.dataPoints.length === 0 ? 'none' : 'grid';
+        }
+      }
 
       // Context gauge chart
       let contextChart = null;
@@ -1878,6 +2975,33 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
       }
 
       /**
+       * Updates the latency display with new data.
+       */
+      function updateLatency(latency) {
+        var sectionEl = document.getElementById('latency-section');
+        if (!sectionEl) return;
+
+        if (!latency || !latency.hasData) {
+          sectionEl.style.display = 'none';
+          return;
+        }
+
+        sectionEl.style.display = 'block';
+
+        var lastEl = document.getElementById('latency-last');
+        var avgEl = document.getElementById('latency-avg');
+        var maxEl = document.getElementById('latency-max');
+        var totalAvgEl = document.getElementById('latency-total-avg');
+        var countEl = document.getElementById('latency-count');
+
+        if (lastEl) lastEl.textContent = latency.lastFirstToken;
+        if (avgEl) avgEl.textContent = latency.avgFirstToken;
+        if (maxEl) maxEl.textContent = latency.maxFirstToken;
+        if (totalAvgEl) totalAvgEl.textContent = latency.avgTotal;
+        if (countEl) countEl.textContent = latency.cycleCount;
+      }
+
+      /**
        * Updates tool analytics display.
        */
       function updateToolAnalytics(analytics) {
@@ -2129,6 +3253,14 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
        * Updates the dashboard with new state.
        */
       function updateDashboard(state) {
+        // Update session state for metric toggles
+        sessionState.totalInputTokens = state.totalInputTokens;
+        sessionState.totalOutputTokens = state.totalOutputTokens;
+        sessionState.totalCacheWriteTokens = state.totalCacheWriteTokens;
+        sessionState.totalCacheReadTokens = state.totalCacheReadTokens;
+        sessionState.totalCost = state.totalCost;
+        sessionState.messageCount = state.modelBreakdown.reduce(function(sum, m) { return sum + m.calls; }, 0);
+
         // Show dashboard, hide empty state
         if (state.sessionActive || state.totalInputTokens > 0) {
           contentEl.style.display = 'none';
@@ -2147,27 +3279,38 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
           statusEl.className = 'status inactive';
         }
 
-        // Update tokens
-        inputTokensEl.textContent = formatNumber(state.totalInputTokens);
-        outputTokensEl.textContent = formatNumber(state.totalOutputTokens);
-        cacheWriteTokensEl.textContent = formatNumber(state.totalCacheWriteTokens);
-        cacheReadTokensEl.textContent = formatNumber(state.totalCacheReadTokens);
+        // Update tokens (in details section)
+        if (inputTokensEl) inputTokensEl.textContent = formatNumber(state.totalInputTokens);
+        if (outputTokensEl) outputTokensEl.textContent = formatNumber(state.totalOutputTokens);
+        if (cacheWriteTokensEl) cacheWriteTokensEl.textContent = formatNumber(state.totalCacheWriteTokens);
+        if (cacheReadTokensEl) cacheReadTokensEl.textContent = formatNumber(state.totalCacheReadTokens);
+
+        // Update primary metric display
+        updatePrimaryMetric();
+        updateInlineStats();
 
         // Update context gauge
         updateContextGauge(state.contextUsagePercent || 0);
 
+        // Update latency display
+        if (state.latencyDisplay) {
+          updateLatency(state.latencyDisplay);
+        }
+
         // Update model breakdown
-        modelListEl.innerHTML = '';
-        if (state.modelBreakdown.length === 0) {
-          modelListEl.innerHTML = '<div class="model-item"><span class="name">No models used yet</span></div>';
-        } else {
-          state.modelBreakdown.forEach(function(model) {
-            const item = document.createElement('div');
-            item.className = 'model-item';
-            item.innerHTML = '<span class="name">' + getShortModelName(model.model) + '</span>' +
-              '<span class="stats">' + model.calls + ' calls, ' + formatNumber(model.tokens) + ' tokens, ' + formatCost(model.cost) + '</span>';
-            modelListEl.appendChild(item);
-          });
+        if (modelListEl) {
+          modelListEl.innerHTML = '';
+          if (state.modelBreakdown.length === 0) {
+            modelListEl.innerHTML = '<div class="model-item"><span class="name">No models used yet</span></div>';
+          } else {
+            state.modelBreakdown.forEach(function(model) {
+              const item = document.createElement('div');
+              item.className = 'model-item';
+              item.innerHTML = '<span class="name">' + getShortModelName(model.model) + '</span>' +
+                '<span class="stats">' + model.calls + ' calls, ' + formatNumber(model.tokens) + ' tokens, ' + formatCost(model.cost) + '</span>';
+              modelListEl.appendChild(item);
+            });
+          }
         }
 
         // Update error details
@@ -2179,7 +3322,7 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
         updateFileChanges(state.fileChangeSummary);
 
         // Update timestamp
-        if (state.lastUpdated) {
+        if (state.lastUpdated && lastUpdatedEl) {
           const date = new Date(state.lastUpdated);
           lastUpdatedEl.textContent = date.toLocaleTimeString();
         }
@@ -2213,27 +3356,37 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
             break;
 
           case 'updateBurnRate':
-            var burnRateEl = document.getElementById('burn-rate');
-            var sessionTimerEl = document.getElementById('session-timer');
-            if (burnRateEl) {
-              burnRateEl.textContent = Math.round(message.burnRate).toLocaleString();
-            }
-            if (sessionTimerEl && message.sessionStartTime) {
+            sessionState.burnRate = Math.round(message.burnRate);
+            if (message.sessionStartTime) {
               var start = new Date(message.sessionStartTime);
               var now = new Date();
               var minutes = Math.floor((now - start) / 60000);
               var hours = Math.floor(minutes / 60);
               var mins = minutes % 60;
-              sessionTimerEl.textContent = hours > 0 ? hours + 'h ' + mins + 'm' : mins + 'm';
+              sessionState.sessionDuration = hours > 0 ? hours + 'h ' + mins + 'm' : mins + 'm';
             }
+            updateInlineStats();
             break;
 
           case 'updateSessionList':
             updateSessionList(message.sessions, message.isUsingCustomPath, message.customPathDisplay);
             break;
 
+          case 'updateHistoricalData':
+            if (historyLoading) historyLoading.style.display = 'none';
+            updateHistoryChart(message.data);
+            break;
+
+          case 'historicalDataLoading':
+            if (historyLoading) historyLoading.style.display = message.loading ? 'block' : 'none';
+            break;
+
           case 'updateQuota':
             updateQuota(message.quota);
+            break;
+
+          case 'updateLatency':
+            updateLatency(message.latency);
             break;
         }
       });
@@ -2266,9 +3419,18 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
         });
       }
 
+      // Import historical data button
+      var importHistoricalBtn = document.getElementById('import-historical-btn');
+      if (importHistoricalBtn) {
+        importHistoricalBtn.addEventListener('click', function() {
+          vscode.postMessage({ type: 'importHistoricalData' });
+        });
+      }
+
       // Initialize charts and signal ready
       initContextGauge();
       initQuotaGauges();
+      initHistoryChart();
       vscode.postMessage({ type: 'webviewReady' });
     })();
   </script>

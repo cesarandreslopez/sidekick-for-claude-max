@@ -19,8 +19,14 @@
  * - url: URLs accessed by WebFetch or search queries from WebSearch
  * - directory: Directories searched by Grep/Glob tools
  * - command: Command types executed by Bash (git, npm, etc.)
+ * - task: Tasks from TaskCreate/TaskUpdate tools
  */
-export type NodeType = 'file' | 'tool' | 'todo' | 'subagent' | 'session' | 'url' | 'directory' | 'command';
+export type NodeType = 'file' | 'tool' | 'todo' | 'subagent' | 'session' | 'url' | 'directory' | 'command' | 'task';
+
+/**
+ * Task status values for visual differentiation.
+ */
+export type TaskNodeStatus = 'pending' | 'in_progress' | 'completed';
 
 /**
  * Graph node for D3.js force simulation.
@@ -50,6 +56,12 @@ export interface GraphNode {
   /** Number of lines deleted (for file nodes) */
   deletions?: number;
 
+  /** Task status for task nodes */
+  taskStatus?: TaskNodeStatus;
+
+  /** Task ID for task nodes (correlates with TrackedTask.taskId) */
+  taskId?: string;
+
   // D3 simulation properties (added during simulation)
   x?: number;
   y?: number;
@@ -59,6 +71,15 @@ export interface GraphNode {
   vy?: number;
   index?: number;
 }
+
+/**
+ * Link types for visual differentiation.
+ *
+ * - default: Standard link between nodes
+ * - task-action: Dashed link from task to tools/files used while task was in_progress
+ * - task-dependency: Link showing task blockedBy relationships
+ */
+export type LinkType = 'default' | 'task-action' | 'task-dependency';
 
 /**
  * Graph link for D3.js force simulation.
@@ -77,6 +98,9 @@ export interface GraphLink {
 
   /** Marks most recent file/URL operation */
   isLatest?: boolean;
+
+  /** Link type for styling (default, task-action, task-dependency) */
+  linkType?: LinkType;
 }
 
 /**

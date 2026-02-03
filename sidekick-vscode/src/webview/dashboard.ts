@@ -66,6 +66,18 @@ interface ModelBreakdownEntry {
 }
 
 /**
+ * Latency display data from extension.
+ */
+interface LatencyDisplay {
+  avgFirstToken: string;
+  maxFirstToken: string;
+  lastFirstToken: string;
+  avgTotal: string;
+  cycleCount: number;
+  hasData: boolean;
+}
+
+/**
  * Dashboard state received from extension.
  */
 interface DashboardState {
@@ -383,6 +395,32 @@ function updateLastUpdated(isoTimestamp: string): void {
 }
 
 /**
+ * Updates latency display elements.
+ * @param latency - Latency display data from extension
+ */
+function updateLatencyDisplay(latency: LatencyDisplay): void {
+  const section = document.getElementById('latency-section');
+  if (section) {
+    section.style.display = latency.hasData ? 'block' : 'none';
+  }
+
+  const lastEl = document.getElementById('latency-last');
+  if (lastEl) lastEl.textContent = latency.lastFirstToken;
+
+  const avgEl = document.getElementById('latency-avg');
+  if (avgEl) avgEl.textContent = latency.avgFirstToken;
+
+  const maxEl = document.getElementById('latency-max');
+  if (maxEl) maxEl.textContent = latency.maxFirstToken;
+
+  const totalAvgEl = document.getElementById('latency-total-avg');
+  if (totalAvgEl) totalAvgEl.textContent = latency.avgTotal;
+
+  const countEl = document.getElementById('latency-count');
+  if (countEl) countEl.textContent = String(latency.cycleCount);
+}
+
+/**
  * Shows/hides empty state vs dashboard content.
  * @param state - Dashboard state
  */
@@ -438,6 +476,9 @@ function handleMessage(event: MessageEvent): void {
       break;
     case 'sessionEnd':
       showSessionInactive();
+      break;
+    case 'updateLatency':
+      updateLatencyDisplay(message.latency);
       break;
   }
 }
