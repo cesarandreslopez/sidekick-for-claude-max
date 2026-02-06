@@ -5,6 +5,15 @@ All notable changes to the Sidekick for Max VS Code extension will be documented
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+## [0.8.1] - 2026-02-07
+
+### Fixed
+- **Mind map layout recovery for dense subagent graphs** ([#8](https://github.com/cesarandreslopez/sidekick-for-claude-max/issues/8))
+  - Added a **Reset Layout** control to rebuild the D3 simulation and recenter on the main session node without refreshing the view
+  - Tuned force behavior to keep clusters compact and readable (localized many-body repulsion, adaptive link distance/collision spacing, gentle x/y centering)
+
 ## [0.8.0] - 2026-02-04
 
 ### Added

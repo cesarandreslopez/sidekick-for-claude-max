@@ -308,12 +308,38 @@ export class MindMapViewProvider implements vscode.WebviewViewProvider, vscode.D
     }
 
     .status {
-      margin-left: auto;
       font-size: 10px;
       padding: 2px 6px;
       border-radius: 3px;
       background: var(--vscode-badge-background);
       color: var(--vscode-badge-foreground);
+    }
+
+    .header-actions {
+      margin-left: auto;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .icon-button {
+      border: 1px solid var(--vscode-button-border, transparent);
+      background: var(--vscode-button-secondaryBackground);
+      color: var(--vscode-button-secondaryForeground);
+      font-size: 10px;
+      line-height: 1;
+      padding: 4px 7px;
+      border-radius: 3px;
+      cursor: pointer;
+    }
+
+    .icon-button:hover:enabled {
+      background: var(--vscode-button-secondaryHoverBackground);
+    }
+
+    .icon-button:disabled {
+      opacity: 0.5;
+      cursor: default;
     }
 
     .status.active {
@@ -495,7 +521,10 @@ export class MindMapViewProvider implements vscode.WebviewViewProvider, vscode.D
   <div class="header">
     <img src="${iconUri}" alt="Sidekick" />
     <h1>Mind Map</h1>
-    <span id="status" class="status">No Session</span>
+    <div class="header-actions">
+      <button id="reset-layout" class="icon-button" type="button" title="Reset graph layout" disabled>Reset Layout</button>
+      <span id="status" class="status">No Session</span>
+    </div>
   </div>
 
   <div id="empty-state" class="empty-state">
@@ -562,6 +591,20 @@ export class MindMapViewProvider implements vscode.WebviewViewProvider, vscode.D
         task: '#FF6B6B'        // Coral red - represents tasks
       };
 
+      // Force tuning for sparse vs dense graph layouts
+      const FORCE_CONFIG = {
+        baseLinkDistance: 62,
+        denseLinkDistance: 74,
+        baseCharge: -90,
+        denseCharge: -140,
+        baseCollisionPadding: 11,
+        denseCollisionPadding: 16,
+        baseChargeDistanceMax: 240,
+        denseChargeDistanceMax: 360,
+        baseAxisStrength: 0.015,
+        denseAxisStrength: 0.035
+      };
+
       // Sizing configuration for dynamic node sizes
       const SIZING_CONFIG = {
         session:   { base: 16, min: 16, max: 16, scale: 0 },     // Fixed
@@ -582,12 +625,80 @@ export class MindMapViewProvider implements vscode.WebviewViewProvider, vscode.D
         return Math.min(config.max, Math.max(config.min, scaled));
       }
 
+      function getForceConfig(nodeCount) {
+        var density = Math.min(1, Math.max(0, (nodeCount - 10) / 40));
+        return {
+          linkDistance: FORCE_CONFIG.baseLinkDistance + (FORCE_CONFIG.denseLinkDistance - FORCE_CONFIG.baseLinkDistance) * density,
+          chargeStrength: FORCE_CONFIG.baseCharge + (FORCE_CONFIG.denseCharge - FORCE_CONFIG.baseCharge) * density,
+          collisionPadding: FORCE_CONFIG.baseCollisionPadding + (FORCE_CONFIG.denseCollisionPadding - FORCE_CONFIG.baseCollisionPadding) * density,
+          chargeDistanceMax: FORCE_CONFIG.baseChargeDistanceMax + (FORCE_CONFIG.denseChargeDistanceMax - FORCE_CONFIG.baseChargeDistanceMax) * density,
+          axisStrength: FORCE_CONFIG.baseAxisStrength + (FORCE_CONFIG.denseAxisStrength - FORCE_CONFIG.baseAxisStrength) * density,
+          collisionIterations: nodeCount > 50 ? 3 : 2
+        };
+      }
+
+      function applyForceConfig(nodeCount) {
+        if (!simulation) {
+          return;
+        }
+
+        var forceConfig = getForceConfig(nodeCount);
+        var linkForce = simulation.force('link');
+        var chargeForce = simulation.force('charge');
+        var collideForce = simulation.force('collide');
+        var xForce = simulation.force('x');
+        var yForce = simulation.force('y');
+
+        if (linkForce) {
+          linkForce.distance(function(link) {
+            var distance = forceConfig.linkDistance;
+            if (link.linkType === 'task-action') return distance * 0.75;
+            if (link.linkType === 'task-dependency') return distance * 0.9;
+
+            var sourceType = link.source && typeof link.source === 'object' ? link.source.type : null;
+            var targetType = link.target && typeof link.target === 'object' ? link.target.type : null;
+
+            if (sourceType === 'tool' || targetType === 'tool') return distance * 0.78;
+            if (sourceType === 'subagent' || targetType === 'subagent') return distance * 0.84;
+            if (sourceType === 'session' || targetType === 'session') return distance * 0.9;
+
+            return distance;
+          });
+        }
+
+        if (chargeForce) {
+          chargeForce
+            .strength(forceConfig.chargeStrength)
+            .distanceMin(12)
+            .distanceMax(forceConfig.chargeDistanceMax);
+        }
+
+        if (collideForce) {
+          collideForce
+            .radius(function(d) { return calculateNodeSize(d) + forceConfig.collisionPadding; })
+            .iterations(forceConfig.collisionIterations);
+        }
+
+        if (xForce) {
+          xForce
+            .x(containerEl.clientWidth / 2)
+            .strength(forceConfig.axisStrength);
+        }
+
+        if (yForce) {
+          yForce
+            .y(containerEl.clientHeight / 2)
+            .strength(forceConfig.axisStrength);
+        }
+      }
+
       // DOM elements
       const statusEl = document.getElementById('status');
       const emptyEl = document.getElementById('empty-state');
       const containerEl = document.getElementById('graph-container');
       const legendEl = document.getElementById('legend');
       const tooltipEl = document.getElementById('tooltip');
+      const resetLayoutEl = document.getElementById('reset-layout');
 
       // D3 elements
       let svg, g, simulation, linkGroup, nodeGroup, labelGroup, changeGroup, zoom;
@@ -603,6 +714,7 @@ export class MindMapViewProvider implements vscode.WebviewViewProvider, vscode.D
       function initGraph() {
         const width = containerEl.clientWidth;
         const height = containerEl.clientHeight;
+        const initialForceConfig = getForceConfig(0);
 
         svg = d3.select('#graph')
           .attr('width', width)
@@ -630,15 +742,99 @@ export class MindMapViewProvider implements vscode.WebviewViewProvider, vscode.D
         simulation = d3.forceSimulation()
           .force('link', d3.forceLink()
             .id(function(d) { return d.id; })
-            .distance(80))
+            .distance(initialForceConfig.linkDistance))
           .force('charge', d3.forceManyBody()
-            .strength(-200))
+            .strength(initialForceConfig.chargeStrength)
+            .distanceMin(12)
+            .distanceMax(initialForceConfig.chargeDistanceMax))
           .force('center', d3.forceCenter(width / 2, height / 2))
+          .force('x', d3.forceX(width / 2).strength(initialForceConfig.axisStrength))
+          .force('y', d3.forceY(height / 2).strength(initialForceConfig.axisStrength))
           .force('collide', d3.forceCollide()
-            .radius(function(d) { return calculateNodeSize(d) + 15; })
-            .iterations(2));
+            .radius(function(d) { return calculateNodeSize(d) + initialForceConfig.collisionPadding; })
+            .iterations(initialForceConfig.collisionIterations));
 
         simulation.on('tick', ticked);
+      }
+
+      /**
+       * Centers viewport on the main session node.
+       */
+      function centerOnSession(options) {
+        if (!svg || !zoom || currentNodes.length === 0) {
+          return;
+        }
+
+        options = options || {};
+        var duration = options.duration || 0;
+        var preserveZoom = options.preserveZoom !== false;
+        var width = svg.node().clientWidth;
+        var height = svg.node().clientHeight;
+        var currentTransform = d3.zoomTransform(svg.node());
+        var scale = preserveZoom ? currentTransform.k : (options.scale || 1);
+        var sessionNode = currentNodes.find(function(node) { return node.type === 'session'; }) || currentNodes[0];
+        var focusX = sessionNode && sessionNode.x != null ? sessionNode.x : width / 2;
+        var focusY = sessionNode && sessionNode.y != null ? sessionNode.y : height / 2;
+
+        var transform = d3.zoomIdentity
+          .translate(width / 2 - focusX * scale, height / 2 - focusY * scale)
+          .scale(scale);
+
+        if (duration > 0) {
+          svg.transition()
+            .duration(duration)
+            .ease(d3.easeCubicInOut)
+            .call(zoom.transform, transform);
+          return;
+        }
+
+        svg.call(zoom.transform, transform);
+      }
+
+      /**
+       * Rebuilds node positions and restarts simulation for dense graphs.
+       */
+      function resetLayout() {
+        if (!simulation || currentNodes.length === 0) {
+          return;
+        }
+
+        var width = containerEl.clientWidth;
+        var height = containerEl.clientHeight;
+        var centerX = width / 2;
+        var centerY = height / 2;
+        var sessionNode = currentNodes.find(function(node) { return node.type === 'session'; }) || null;
+        var orbitNodes = currentNodes.filter(function(node) { return node !== sessionNode; });
+        var radius = Math.max(50, Math.min(width, height) * 0.2);
+        var total = Math.max(1, orbitNodes.length);
+
+        currentNodes.forEach(function(node) {
+          node.fx = null;
+          node.fy = null;
+        });
+
+        if (sessionNode) {
+          sessionNode.x = centerX;
+          sessionNode.y = centerY;
+          sessionNode.vx = 0;
+          sessionNode.vy = 0;
+        }
+
+        orbitNodes.forEach(function(node, index) {
+          var angle = (Math.PI * 2 * index) / total;
+          var jitter = 10 * Math.sin(index * 1.7);
+          node.x = centerX + Math.cos(angle) * (radius + jitter);
+          node.y = centerY + Math.sin(angle) * (radius + jitter);
+          node.vx = 0;
+          node.vy = 0;
+        });
+
+        applyForceConfig(currentNodes.length);
+        simulation.nodes(currentNodes);
+        simulation.force('link').links(currentLinks);
+        simulation.alpha(1).alphaTarget(0).restart();
+
+        centerOnSession({ duration: 250, preserveZoom: false, scale: 1 });
       }
 
       /**
@@ -885,6 +1081,7 @@ export class MindMapViewProvider implements vscode.WebviewViewProvider, vscode.D
           });
 
         // Update simulation
+        applyForceConfig(nodes.length);
         simulation.nodes(nodes);
         simulation.force('link').links(links);
         simulation.alpha(0.3).restart();
@@ -988,6 +1185,9 @@ export class MindMapViewProvider implements vscode.WebviewViewProvider, vscode.D
         emptyEl.style.display = show ? 'flex' : 'none';
         containerEl.style.display = show ? 'none' : 'block';
         legendEl.style.display = show ? 'none' : 'block';
+        if (resetLayoutEl) {
+          resetLayoutEl.disabled = show;
+        }
       }
 
       /**
@@ -1030,9 +1230,16 @@ export class MindMapViewProvider implements vscode.WebviewViewProvider, vscode.D
           const height = containerEl.clientHeight;
           svg.attr('width', width).attr('height', height);
           simulation.force('center', d3.forceCenter(width / 2, height / 2));
+          applyForceConfig(currentNodes.length);
           simulation.alpha(0.3).restart();
         }
       });
+
+      if (resetLayoutEl) {
+        resetLayoutEl.addEventListener('click', function() {
+          resetLayout();
+        });
+      }
 
       // Initialize and signal ready
       initGraph();
