@@ -93,6 +93,10 @@ Monitor your Claude Code sessions in real-time with a comprehensive analytics da
 
 ![Mind map visualization](assets/node_visualization_graph.gif)
 
+- **Kanban Board** - TaskCreate/TaskUpdate tasks grouped by status
+  - Collapsible columns with hidden-task summaries
+  - Real-time updates as tasks move through the workflow
+
 - **Latest Files Touched** - Tree view of files modified during sessions
 - **Subagents Tree** - Monitor spawned Task agents during complex operations
 - **Status Bar Metrics** - Quick session status in the VS Code status bar

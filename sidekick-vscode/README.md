@@ -98,6 +98,11 @@ Monitor your Claude Code sessions in real-time with a comprehensive analytics da
 
 ![Mind map visualization](https://raw.githubusercontent.com/cesarandreslopez/sidekick-for-claude-max/main/assets/node_visualization_graph.gif)
 
+**Kanban Board:**
+- TaskCreate/TaskUpdate tasks grouped by status in a dedicated view
+- Collapsible columns with hidden-task summaries
+- Real-time updates as tasks move through the workflow
+
 **Tree Views:**
 - **Latest Files Touched** - Quick access to files modified during Claude Code sessions
 - **Subagents** - Monitor spawned Task agents during complex operations with status tracking

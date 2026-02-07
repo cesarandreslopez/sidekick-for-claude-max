@@ -45,6 +45,7 @@ import { ErrorExplanationProvider } from "./providers/ErrorExplanationProvider";
 import { ErrorViewProvider } from "./providers/ErrorViewProvider";
 import { DashboardViewProvider } from "./providers/DashboardViewProvider";
 import { MindMapViewProvider } from "./providers/MindMapViewProvider";
+import { TaskBoardViewProvider } from "./providers/TaskBoardViewProvider";
 import { TempFilesTreeProvider } from "./providers/TempFilesTreeProvider";
 import { SubagentTreeProvider } from "./providers/SubagentTreeProvider";
 import { StatusBarManager } from "./services/StatusBarManager";
@@ -328,6 +329,14 @@ export async function activate(context: vscode.ExtensionContext) {
       vscode.window.registerWebviewViewProvider(MindMapViewProvider.viewType, mindMapProvider)
     );
     log('Mind map view provider registered');
+
+    // Register task board view provider (depends on sessionMonitor)
+    const taskBoardProvider = new TaskBoardViewProvider(context.extensionUri, sessionMonitor);
+    context.subscriptions.push(taskBoardProvider);
+    context.subscriptions.push(
+      vscode.window.registerWebviewViewProvider(TaskBoardViewProvider.viewType, taskBoardProvider)
+    );
+    log('Task board view provider registered');
 
     // Register temp files tree provider (depends on sessionMonitor)
     const tempFilesProvider = new TempFilesTreeProvider(sessionMonitor);

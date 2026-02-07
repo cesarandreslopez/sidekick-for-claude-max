@@ -2,7 +2,7 @@
   "name": "sidekick-for-max",
   "displayName": "Sidekick for Max",
   "description": "AI-powered code completions, transforms, commit messages, RSVP speed reading, and Claude Code session monitoring - all using your Claude Max subscription at no extra cost.",
-  "version": "0.8.1",
+  "version": "0.8.2",
   "publisher": "CesarAndresLopez",
   "author": {
     "name": "Cesar Andres Lopez",
@@ -758,6 +758,11 @@
           "type": "webview",
           "id": "sidekick.mindMap",
           "name": "Mind Map"
+        },
+        {
+          "type": "webview",
+          "id": "sidekick.taskBoard",
+          "name": "Kanban Board"
         },
         {
           "id": "sidekick.tempFiles",
