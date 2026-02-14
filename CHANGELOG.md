@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.5] - 2026-02-14
+
+### Fixed
+
+- **Accurate cost estimation**: Session costs now use actual per-model input/output/cache token breakdown instead of a 50/50 approximation
+- **Toggle command persistence**: `Sidekick: Toggle` now updates config so inline completions actually stop
+- **XSS hardening in RSVP reader**: Replaced `innerHTML` with DOM API in word display
+- **Session re-initialization**: `Stop Monitoring` preserves `workspaceState` on re-create
+- **Overly broad completion filter**: `however` pattern no longer rejects valid code containing the word mid-line
+- **Task Board column mismatch**: Removed stale `'deleted'` column from inline script
+- **SVG in binary filter**: `.svg` removed from `BINARY_EXTENSIONS` — it's text-based XML
+- **JSDoc default mismatch**: `truncateDiffIntelligently` docs corrected from 3500 to 8000
+- **Timer leak**: Dashboard clears `_richerPanelTimer` on dispose
+
+### Improved
+
+- Extracted shared utilities: `getNonce`, `extractTaskIdFromResult`, `stripMarkdownFences`
+- Type safety: proper type guard replaces `as any` casts; typed `handleTokenUsage`; disambiguated `WebviewMessage` names
+- Dead code removal: always-true ternary, unused fields, identical branches
+- Moved analysis types to `types/analysis.ts` to fix inverted dependency direction
+- `seenHashes` pruning retains 75% (was 50%) to reduce re-processing window
+- TempFilesTreeProvider polling skips when no session is active
+
 ## [0.8.4] - 2026-02-14
 
 ### Improved

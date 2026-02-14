@@ -5,6 +5,29 @@ All notable changes to the Sidekick for Max VS Code extension will be documented
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.5] - 2026-02-14
+
+### Fixed
+
+- **Accurate cost estimation**: Session costs now use actual per-model input/output/cache token breakdown instead of a 50/50 approximation — affects Dashboard, Session Summary, and historical exports
+- **Toggle command persistence**: `Sidekick: Toggle` now updates the `sidekick.enabled` config so the inline completion provider respects the toggle state
+- **XSS hardening in RSVP reader**: Replaced `innerHTML` with DOM API in the word display to prevent injection from user-selected text
+- **Session re-initialization**: `Stop Monitoring` now passes `workspaceState` when re-creating the SessionMonitor, preserving custom session path persistence
+- **Overly broad completion filter**: The `however` conversational pattern no longer rejects valid code completions containing the word "however" mid-line — now only matches conversational "However," at the start of a line
+- **COLUMN_ORDER mismatch**: Removed stale `'deleted'` column from the Task Board inline script that never received data from the extension
+- **SVG in binary filter**: Removed `.svg` from `BINARY_EXTENSIONS` in the diff filter — SVG is text-based XML and should be included in diffs
+- **JSDoc default mismatch**: Corrected `truncateDiffIntelligently` docs from "defaults to 3500" to the actual default of 8000
+- **Timer leak on dispose**: Dashboard now clears `_richerPanelTimer` timeout on dispose
+
+### Improved
+
+- **Shared utilities extraction**: Consolidated 6 duplicate `getNonce()` implementations, 2 duplicate `extractTaskIdFromResult()` implementations, and scattered markdown fence-stripping regexes into shared modules (`utils/nonce.ts`, `utils/taskHelpers.ts`, `utils/markdownUtils.ts`)
+- **Type safety**: Replaced `(block as any)` casts with a proper `isTypedBlock()` type guard in SessionMonitor; typed `handleTokenUsage` parameter in MonitorStatusBar; resolved `WebviewMessage` name collision by renaming to `DashboardWebviewMessage` and `RsvpWebviewMessage`
+- **Dead code removal**: Removed always-true ternary in TaskBoard, unused `_pendingMode`/`_pendingComplexity` fields in RsvpViewProvider, and identical `if (language === 'python')` branch in DocumentationService
+- **Dependency direction**: Moved analysis types (`AnalyzedError`, `ToolPattern`, etc.) from `services/SessionAnalyzer` to `types/analysis.ts` so utility modules no longer import from services
+- **Event deduplication**: `seenHashes` pruning now retains 75% of entries (was 50%) to reduce re-processing window during high-throughput sessions
+- **Polling guard**: TempFilesTreeProvider 2-second subagent scan now skips when no session is active
+
 ## [0.8.4] - 2026-02-14
 
 ### Improved
