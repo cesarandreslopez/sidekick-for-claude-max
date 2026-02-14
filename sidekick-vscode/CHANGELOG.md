@@ -5,6 +5,55 @@ All notable changes to the Sidekick for Max VS Code extension will be documented
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.0] - 2026-02-14
+
+### Added
+
+- **Context Token Attribution**: Stacked bar chart in the dashboard showing where your context window budget goes
+  - Classifies tokens into 7 categories: System Prompt, CLAUDE.md, User Messages, Assistant Responses, Tool Inputs, Tool Outputs, Thinking
+  - Helps identify what's consuming context (e.g., large tool outputs, verbose CLAUDE.md)
+  - Updates in real-time as the session progresses
+- **Notification Triggers**: Configurable alerts for concerning Claude Code activity
+  - Built-in triggers: `.env`/credential file access, destructive commands (`rm -rf`, `git push --force`), tool error bursts, context compaction
+  - Token threshold alerts when cumulative usage exceeds a configurable limit
+  - Fires VS Code notifications so you can monitor autonomous sessions
+  - New settings: `sidekick.notifications.enabled`, `sidekick.notifications.triggers.*`, `sidekick.notifications.tokenThreshold`
+- **Compaction Detection**: Context compaction events (`summary` type) are now processed and visualized
+  - Shows compaction markers in the activity timeline
+  - Tracks context size deltas so you know how much was lost
+- **Timeline Search & Filtering**: Full-text search within the activity timeline
+  - Search input with instant client-side filtering across all events
+  - Timeline cap removed during search so all events are searchable
+  - Filter toggles for message noise classification (system reminders, sidechain detection)
+- **Conversation Viewer**: Full editor tab showing the complete session conversation
+  - Chat-style rendering with user (blue), assistant (green), tool (collapsible), and compaction chunks
+  - Built-in search for finding content within the conversation
+  - New command: `Sidekick: View Session Conversation`
+- **Cross-Session Search**: Search across all Claude Code sessions in `~/.claude/projects/`
+  - VS Code QuickPick interface with debounced search and context snippets
+  - Icons per event type (user, assistant, tool_use)
+  - Click results to open the session file
+  - New command: `Sidekick: Search Across Sessions`
+- **Rich Tool Call Inspector**: Full editor tab with specialized tool call rendering
+  - Read: file path with range info
+  - Edit: inline diff-style display (red deletions, green additions)
+  - Bash: formatted command with description
+  - Grep/Glob: search parameters
+  - Filter buttons by tool type, expandable detail panels
+  - New command: `Sidekick: Open Tool Inspector`
+
+### Improved
+
+- **Message Noise Classification**: Timeline now respects the `isSidechain` flag and filters system metadata
+  - Heuristic detection for system reminders, permission checks, and noise events
+  - Filter toggles in the dashboard to show/hide noise
+- **Enhanced Subagent Visualization**: Subagent tree now shows richer metrics
+  - Per-agent token usage (input + output) with "42K tok" display
+  - Duration tracking ("1m 23s")
+  - Parallel execution detection (agents with overlapping timestamps shown with layers icon)
+  - Stats enriched from `SubagentFileScanner` token extraction
+- **Tool Analytics Drill-Down**: Clicking a tool analytics row now shows individual tool calls with timing and metadata
+
 ## [0.8.5] - 2026-02-14
 
 ### Fixed

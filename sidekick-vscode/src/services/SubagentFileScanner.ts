@@ -96,6 +96,10 @@ function parseAgentFile(filePath: string, agentId: string): SubagentStats | null
     const toolCalls: ToolCall[] = [];
     let agentType: string | undefined;
     let description: string | undefined;
+    let inputTokens = 0;
+    let outputTokens = 0;
+    let startTime: Date | undefined;
+    let endTime: Date | undefined;
 
     // Task tracking state
     const taskState: TaskState = {
@@ -113,6 +117,17 @@ function parseAgentFile(filePath: string, agentId: string): SubagentStats | null
       try {
         const event = JSON.parse(line);
         const eventTimestamp = new Date(event.timestamp || Date.now());
+
+        // Track start/end times
+        if (!startTime) startTime = eventTimestamp;
+        endTime = eventTimestamp;
+
+        // Extract token usage from assistant messages
+        if (event.type === 'assistant' && event.message?.usage) {
+          const usage = event.message.usage;
+          inputTokens += (usage.input_tokens || 0) + (usage.cache_creation_input_tokens || 0) + (usage.cache_read_input_tokens || 0);
+          outputTokens += usage.output_tokens || 0;
+        }
 
         // Extract agent type and description from Task tool invocation
         // This appears in the parent session, but we can also look for it
@@ -230,13 +245,19 @@ function parseAgentFile(filePath: string, agentId: string): SubagentStats | null
     }
 
     // If we found any tool calls, return the stats
-    if (toolCalls.length > 0 || agentType || description) {
+    if (toolCalls.length > 0 || agentType || description || inputTokens > 0) {
+      const durationMs = startTime && endTime ? endTime.getTime() - startTime.getTime() : undefined;
       return {
         agentId,
         agentType,
         description,
         toolCalls,
-        taskState: taskState.tasks.size > 0 ? taskState : undefined
+        taskState: taskState.tasks.size > 0 ? taskState : undefined,
+        inputTokens,
+        outputTokens,
+        startTime,
+        endTime,
+        durationMs
       };
     }
 

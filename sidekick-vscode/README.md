@@ -82,15 +82,20 @@ Monitor your Claude Code sessions in real-time with a comprehensive analytics da
 
 **Session Analytics Dashboard:**
 - Real-time token usage and cost tracking with model-specific pricing
+- **Context token attribution** chart showing where your context budget goes (system prompt, CLAUDE.md, user messages, assistant responses, tool I/O, thinking)
 - Token usage tooltips and quota projections showing estimated usage at reset
 - Context window gauge showing input/output token usage vs. limits
+- **Compaction detection** with timeline markers showing when context was compressed and how much was lost
 - Activity timeline displaying user prompts, tool calls, errors, and subagent spawns
+- **Timeline search & filtering** with full-text search and noise classification (filter system reminders, sidechains)
+
+![Context attribution, compaction detection, and filterable timeline](https://raw.githubusercontent.com/cesarandreslopez/sidekick-for-claude-max/main/assets/context_attribution_compaction_and_filterable_timelines.png)
 - Collapsible session navigator to save vertical space when not switching sessions
 - Session selector dropdown to switch between active and recent sessions
 
 ![Session navigator](https://raw.githubusercontent.com/cesarandreslopez/sidekick-for-claude-max/main/assets/session_explorer.png)
 - **Browse Session Folders**: Manually select any Claude project folder to monitor, even from different directories
-- Tool analytics with categorization (file operations, search, bash commands, etc.)
+- Tool analytics with categorization and **drill-down** to individual tool calls
 - **Session Summary** with AI narrative generation (progress notification + inline spinner)
 - Organized Session tab with three collapsible groups: Session Activity, Performance & Cost, Tasks & Recovery
 
@@ -110,9 +115,27 @@ Monitor your Claude Code sessions in real-time with a comprehensive analytics da
 
 ![Kanban board](https://raw.githubusercontent.com/cesarandreslopez/sidekick-for-claude-max/main/assets/kanban_style_monitoring.gif)
 
+**Conversation Viewer:**
+- Full editor tab showing the complete session conversation in chat-style layout
+- User, assistant, tool, and compaction chunks with distinct visual styling
+- Built-in search for finding content within long conversations
+
+**Tool Inspector:**
+- Full editor tab with specialized rendering per tool type
+- Read: file paths with range info; Edit: inline diff display; Bash: formatted commands; Grep/Glob: search parameters
+- Filter buttons by tool type, expandable detail panels
+
+**Cross-Session Search:**
+- Search across all Claude Code sessions in `~/.claude/projects/`
+- QuickPick interface with context snippets and event type icons
+
+**Notification Triggers:**
+- Configurable alerts for credential file access (`.env`, `.credentials`), destructive commands (`rm -rf`, `git push --force`), tool error bursts, context compaction, and token usage thresholds
+- Fires VS Code notifications for monitoring autonomous sessions
+
 **Tree Views:**
 - **Latest Files Touched** - Quick access to files modified during Claude Code sessions
-- **Subagents** - Monitor spawned Task agents during complex operations with status tracking
+- **Subagents** - Monitor spawned Task agents with token usage, duration, and parallel execution detection
 
 **Status Bar Integration:**
 - Real-time session indicator in the VS Code status bar
@@ -294,6 +317,9 @@ Speed read selected text with AI-powered explanations. [RSVP (Rapid Serial Visua
 | Sidekick: Refresh/Find Session | - | Discover new Claude Code sessions |
 | Sidekick: Browse Session Folders... | - | Browse all Claude project folders to manually select a session |
 | Sidekick: Reset to Auto-Detect Session | - | Clear custom folder selection, revert to auto-detect |
+| Sidekick: View Session Conversation | - | Open full conversation viewer for the current session |
+| Sidekick: Search Across Sessions | - | Search across all Claude Code sessions |
+| Sidekick: Open Tool Inspector | - | Open rich tool call inspector for the current session |
 
 ### Status Bar Menu
 
@@ -336,6 +362,12 @@ Click "Sidekick" in the status bar to access:
 | `sidekick.showCompletionHint` | `true` | Show visual hint at cursor suggesting AI completion |
 | `sidekick.completionHintDelayMs` | `1500` | Delay before showing completion hint (ms) |
 | `sidekick.enableSessionMonitoring` | `true` | Enable Claude Code session monitoring |
+| `sidekick.notifications.enabled` | `true` | Enable session notification triggers |
+| `sidekick.notifications.triggers.env-access` | `true` | Alert on credential/env file access |
+| `sidekick.notifications.triggers.destructive-cmd` | `true` | Alert on destructive commands |
+| `sidekick.notifications.triggers.tool-error` | `true` | Alert on tool error bursts |
+| `sidekick.notifications.triggers.compaction` | `true` | Alert on context compaction |
+| `sidekick.notifications.tokenThreshold` | `0` | Alert when token usage exceeds this value (0 = disabled) |
 
 > **Note:** Prose files (Markdown, plaintext, HTML, XML, LaTeX, etc.) automatically use multiline mode regardless of the setting.
 

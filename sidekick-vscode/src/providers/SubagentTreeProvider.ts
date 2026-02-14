@@ -20,7 +20,7 @@ import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
 import { SessionMonitor } from '../services/SessionMonitor';
-import { TimelineEvent } from '../types/claudeSession';
+import { TimelineEvent, SubagentStats } from '../types/claudeSession';
 
 /**
  * Type for subagent classification based on description keywords.
@@ -48,6 +48,21 @@ interface SubagentItem {
 
   /** When the agent was first detected */
   timestamp: Date;
+
+  /** Total input tokens consumed */
+  inputTokens?: number;
+
+  /** Total output tokens consumed */
+  outputTokens?: number;
+
+  /** Duration in milliseconds */
+  durationMs?: number;
+
+  /** Short description */
+  description?: string;
+
+  /** Whether this agent ran in parallel with another */
+  isParallel?: boolean;
 }
 
 /**
@@ -241,6 +256,13 @@ export class SubagentTreeProvider implements vscode.TreeDataProvider<SubagentIte
       return;
     }
 
+    // Enrich with SubagentStats from monitor (has token metrics)
+    const agentStats = this.sessionMonitor.getSubagentStats();
+    const statsMap = new Map<string, SubagentStats>();
+    for (const s of agentStats) {
+      statsMap.set(s.agentId, s);
+    }
+
     try {
       const files = fs.readdirSync(this.sessionDir);
       const agentFilePattern = /^agent-(.*)\.jsonl$/;
@@ -252,27 +274,96 @@ export class SubagentTreeProvider implements vscode.TreeDataProvider<SubagentIte
 
           // Skip if already tracked
           if (this.subagents.has(agentId)) {
+            // But still enrich with stats if available
+            const existing = this.subagents.get(agentId)!;
+            const stats = statsMap.get(agentId);
+            if (stats) {
+              this.enrichFromStats(existing, stats);
+            }
             continue;
           }
 
           // Add discovered agent
           const transcriptPath = path.join(this.sessionDir, file);
+          const stats = statsMap.get(agentId);
+          const agentType = this.classifyAgentType(stats?.agentType);
           const item: SubagentItem = {
             id: agentId,
-            label: `${agentId} (Unknown)`,
+            label: `${agentId.substring(0, 8)} (${agentType})`,
             type: 'completed',
-            agentType: 'Unknown',
+            agentType,
             transcriptPath,
-            timestamp: new Date()
+            timestamp: stats?.startTime || new Date(),
+            inputTokens: stats?.inputTokens,
+            outputTokens: stats?.outputTokens,
+            durationMs: stats?.durationMs,
+            description: stats?.description
           };
 
           this.subagents.set(agentId, item);
         }
       }
 
+      // Detect parallel execution (agents with overlapping time ranges)
+      this.detectParallelExecution();
+
       this.refresh();
     } catch {
       // Directory read failed - ignore, will update on events
+    }
+  }
+
+  /**
+   * Enriches an existing SubagentItem with data from SubagentStats.
+   */
+  private enrichFromStats(item: SubagentItem, stats: SubagentStats): void {
+    item.inputTokens = stats.inputTokens;
+    item.outputTokens = stats.outputTokens;
+    item.durationMs = stats.durationMs;
+    if (stats.description && !item.description) {
+      item.description = stats.description;
+    }
+    if (stats.agentType) {
+      item.agentType = this.classifyAgentType(stats.agentType);
+      item.label = `${item.id.substring(0, 8)} (${item.agentType})`;
+    }
+  }
+
+  /**
+   * Classifies a raw agent type string into our AgentType enum.
+   */
+  private classifyAgentType(raw?: string): AgentType {
+    if (!raw) return 'Unknown';
+    const lower = raw.toLowerCase();
+    if (lower.includes('explore') || lower === 'explore') return 'Explore';
+    if (lower.includes('plan') || lower === 'plan') return 'Plan';
+    if (lower.includes('task') || lower.includes('bash') || lower.includes('general')) return 'Task';
+    return 'Unknown';
+  }
+
+  /**
+   * Detects agents that ran in parallel (overlapping time ranges within 100ms).
+   */
+  private detectParallelExecution(): void {
+    const agents = Array.from(this.subagents.values())
+      .filter(a => a.timestamp && a.durationMs);
+
+    for (let i = 0; i < agents.length; i++) {
+      const a = agents[i];
+      const aStart = a.timestamp.getTime();
+      const aEnd = aStart + (a.durationMs || 0);
+
+      for (let j = i + 1; j < agents.length; j++) {
+        const b = agents[j];
+        const bStart = b.timestamp.getTime();
+        const bEnd = bStart + (b.durationMs || 0);
+
+        // Check for overlap (with 100ms tolerance)
+        if (aStart < bEnd + 100 && bStart < aEnd + 100) {
+          a.isParallel = true;
+          b.isParallel = true;
+        }
+      }
     }
   }
 
@@ -288,9 +379,26 @@ export class SubagentTreeProvider implements vscode.TreeDataProvider<SubagentIte
     // Set icon based on status
     if (element.type === 'running') {
       treeItem.iconPath = new vscode.ThemeIcon('sync~spin');
+    } else if (element.isParallel) {
+      treeItem.iconPath = new vscode.ThemeIcon('layers');
     } else {
       treeItem.iconPath = new vscode.ThemeIcon('check');
     }
+
+    // Build description with metrics
+    const descParts: string[] = [];
+    if (element.inputTokens || element.outputTokens) {
+      const totalK = Math.round(((element.inputTokens || 0) + (element.outputTokens || 0)) / 1000);
+      descParts.push(`${totalK}K tok`);
+    }
+    if (element.durationMs) {
+      const secs = Math.round(element.durationMs / 1000);
+      descParts.push(secs >= 60 ? `${Math.floor(secs / 60)}m ${secs % 60}s` : `${secs}s`);
+    }
+    if (element.isParallel) {
+      descParts.push('parallel');
+    }
+    treeItem.description = descParts.join(' | ');
 
     // Set click-to-open command if transcript exists
     if (element.transcriptPath && fs.existsSync(element.transcriptPath)) {
@@ -299,9 +407,12 @@ export class SubagentTreeProvider implements vscode.TreeDataProvider<SubagentIte
         title: 'Open Transcript',
         arguments: [vscode.Uri.file(element.transcriptPath)]
       };
-      treeItem.tooltip = `Click to open transcript\n${element.transcriptPath}`;
+      const tooltipParts = [element.transcriptPath];
+      if (element.description) tooltipParts.unshift(element.description);
+      if (element.isParallel) tooltipParts.push('Ran in parallel with other agents');
+      treeItem.tooltip = tooltipParts.join('\n');
     } else {
-      treeItem.tooltip = 'Transcript not yet available';
+      treeItem.tooltip = element.description || 'Transcript not yet available';
     }
 
     // Set description and context

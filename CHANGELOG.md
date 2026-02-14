@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.0] - 2026-02-14
+
+### Added
+
+- **Context Token Attribution**: Stacked bar chart showing token distribution across 7 categories (system prompt, CLAUDE.md, user messages, assistant responses, tool I/O, thinking)
+- **Notification Triggers**: Configurable alerts for credential access, destructive commands, tool error bursts, compaction, and token thresholds
+- **Compaction Detection**: `summary` events now processed with timeline markers and context size deltas
+- **Timeline Search & Filtering**: Full-text search with noise classification and uncapped event display
+- **Conversation Viewer**: Full editor tab with chat-style session rendering and built-in search
+- **Cross-Session Search**: QuickPick-based search across all `~/.claude/projects/` sessions
+- **Rich Tool Call Inspector**: Full editor tab with per-tool specialized rendering (diffs for Edit, commands for Bash, etc.)
+- New commands: View Session Conversation, Search Across Sessions, Open Tool Inspector
+
+### Improved
+
+- **Message Noise Classification**: Sidechain detection and system reminder filtering with dashboard toggles
+- **Enhanced Subagent Visualization**: Token metrics, duration tracking, and parallel execution detection
+- **Tool Analytics Drill-Down**: Click analytics rows to see individual tool calls
+
 ## [0.8.5] - 2026-02-14
 
 ### Fixed

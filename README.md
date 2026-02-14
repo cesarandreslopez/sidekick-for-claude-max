@@ -79,13 +79,19 @@ Monitor your Claude Code sessions in real-time with a comprehensive analytics da
 
 - **Session Analytics Dashboard** - Track token usage, costs, and activity in real-time
   - Token usage with explanatory tooltips and quota projections showing estimated usage at reset
+  - **Context token attribution** chart showing where tokens go (system prompt, CLAUDE.md, user messages, assistant responses, tool I/O, thinking)
   - Context window gauge showing input/output usage vs. limits
+  - **Compaction detection** with timeline markers when context is compressed
   - Activity timeline with user prompts, tool calls, and errors
+  - **Timeline search & filtering** with full-text search and noise classification
+
+![Context attribution, compaction detection, and filterable timeline](assets/context_attribution_compaction_and_filterable_timelines.png)
+
   - Collapsible session navigator to save vertical space when not switching sessions
   - Session selector to switch between active sessions
 
 ![Session navigator](assets/session_explorer.png)
-  - Tool analytics showing what operations Claude is performing
+  - Tool analytics with **drill-down** to individual tool calls
   - **Session Summary** with AI narrative generation and progress feedback
   - Organized Session tab with three collapsible groups: Session Activity, Performance & Cost, Tasks & Recovery
 
@@ -103,8 +109,12 @@ Monitor your Claude Code sessions in real-time with a comprehensive analytics da
 
 ![Kanban board](assets/kanban_style_monitoring.gif)
 
+- **Conversation Viewer** - Full editor tab with chat-style session rendering and built-in search
+- **Tool Inspector** - Specialized per-tool rendering (diffs for Edit, formatted commands for Bash, search params for Grep/Glob)
+- **Cross-Session Search** - QuickPick-based search across all `~/.claude/projects/` sessions
+- **Notification Triggers** - Alerts for credential access, destructive commands, tool error bursts, compaction, and token thresholds
 - **Latest Files Touched** - Tree view of files modified during sessions
-- **Subagents Tree** - Monitor spawned Task agents during complex operations
+- **Subagents Tree** - Monitor spawned Task agents with token metrics, duration, and parallel execution detection
 - **Status Bar Metrics** - Quick session status in the VS Code status bar
 - **CLAUDE.md Suggestions** - AI-powered analysis of your session patterns
   - Detects recovery patterns (when Claude gets stuck and how it recovers)

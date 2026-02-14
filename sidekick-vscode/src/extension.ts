@@ -37,6 +37,10 @@ import { HistoricalDataService } from './services/HistoricalDataService';
 import { RetroactiveDataLoader } from './services/RetroactiveDataLoader';
 import { SessionAnalyzer } from './services/SessionAnalyzer';
 import { ClaudeMdAdvisor } from './services/ClaudeMdAdvisor';
+import { NotificationTriggerService } from './services/NotificationTriggerService';
+import { ConversationViewProvider } from './providers/ConversationViewProvider';
+import { CrossSessionSearch } from './services/CrossSessionSearch';
+import { ToolInspectorProvider } from './providers/ToolInspectorProvider';
 import { InlineCompletionProvider } from "./providers/InlineCompletionProvider";
 import { InlineChatProvider } from "./providers/InlineChatProvider";
 import { RsvpViewProvider } from "./providers/RsvpViewProvider";
@@ -321,6 +325,41 @@ export async function activate(context: vscode.ExtensionContext) {
       vscode.window.registerWebviewViewProvider(DashboardViewProvider.viewType, dashboardProvider)
     );
     log('Dashboard view provider registered');
+
+    // Initialize notification trigger service for session monitoring alerts
+    const notificationTriggerService = new NotificationTriggerService(sessionMonitor);
+    context.subscriptions.push(notificationTriggerService);
+    log('NotificationTriggerService initialized');
+
+    // Initialize conversation viewer for full-tab session inspection
+    const conversationViewer = new ConversationViewProvider(context.extensionUri, sessionMonitor);
+    context.subscriptions.push(conversationViewer);
+    context.subscriptions.push(
+      vscode.commands.registerCommand('sidekick.openConversation', () => {
+        conversationViewer.open();
+      })
+    );
+    log('ConversationViewProvider initialized');
+
+    // Initialize cross-session search
+    const crossSessionSearch = new CrossSessionSearch(sessionMonitor);
+    context.subscriptions.push(crossSessionSearch);
+    context.subscriptions.push(
+      vscode.commands.registerCommand('sidekick.searchSessions', () => {
+        crossSessionSearch.search();
+      })
+    );
+    log('CrossSessionSearch initialized');
+
+    // Initialize tool inspector for detailed tool call viewing
+    const toolInspector = new ToolInspectorProvider(context.extensionUri, sessionMonitor);
+    context.subscriptions.push(toolInspector);
+    context.subscriptions.push(
+      vscode.commands.registerCommand('sidekick.openToolInspector', () => {
+        toolInspector.open();
+      })
+    );
+    log('ToolInspectorProvider initialized');
 
     // Register generate session summary command
     context.subscriptions.push(

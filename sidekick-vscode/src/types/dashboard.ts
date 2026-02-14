@@ -105,7 +105,11 @@ export type DashboardMessage =
   | { type: 'updateToolEfficiency'; data: ToolEfficiencyData[] }
   | { type: 'sessionNarrative'; narrative: string }
   | { type: 'narrativeLoading'; loading: boolean }
-  | { type: 'narrativeError'; error: string };
+  | { type: 'narrativeError'; error: string }
+  | { type: 'updateCompactions'; compactions: CompactionEventDisplay[] }
+  | { type: 'updateContextAttribution'; attribution: ContextAttributionDisplay[] }
+  | { type: 'notification'; title: string; body: string; severity: 'info' | 'warning' | 'error' }
+  | { type: 'toolCallDetails'; toolName: string; calls: ToolCallDetailDisplay[] };
 
 /**
  * Messages from webview to extension.
@@ -128,7 +132,10 @@ export type DashboardWebviewMessage =
   | { type: 'copySuggestion'; text: string }
   | { type: 'openClaudeMd' }
   | { type: 'generateNarrative' }
-  | { type: 'requestSessionSummary' };
+  | { type: 'requestSessionSummary' }
+  | { type: 'searchTimeline'; query: string }
+  | { type: 'setTimelineFilter'; filters: TimelineFilterState }
+  | { type: 'requestToolCallDetails'; toolName: string };
 
 /**
  * Model usage breakdown entry.
@@ -170,7 +177,7 @@ export interface ToolAnalyticsDisplay {
  */
 export interface TimelineEventDisplay {
   /** Event type for icon selection */
-  type: 'user_prompt' | 'tool_call' | 'tool_result' | 'error' | 'assistant_response';
+  type: 'user_prompt' | 'tool_call' | 'tool_result' | 'error' | 'assistant_response' | 'compaction';
   /** Formatted time (e.g., "2:34 PM") */
   time: string;
   /** Event description */
@@ -179,6 +186,46 @@ export interface TimelineEventDisplay {
   isError?: boolean;
   /** Full text for expandable content (when truncated) */
   fullText?: string;
+  /** Noise classification for filtering */
+  noiseLevel?: 'user' | 'ai' | 'system' | 'noise';
+  /** Whether this event is from a sidechain */
+  isSidechain?: boolean;
+  /** Context before compaction (for compaction events) */
+  contextBefore?: number;
+  /** Context after compaction (for compaction events) */
+  contextAfter?: number;
+  /** Tokens reclaimed by compaction */
+  tokensReclaimed?: number;
+}
+
+/**
+ * Compaction event formatted for display.
+ */
+export interface CompactionEventDisplay {
+  /** Formatted time */
+  time: string;
+  /** Context before compaction (tokens) */
+  contextBefore: number;
+  /** Context after compaction (tokens) */
+  contextAfter: number;
+  /** Tokens reclaimed */
+  tokensReclaimed: number;
+  /** Percentage of context reclaimed */
+  reclaimedPercent: number;
+}
+
+/**
+ * Context attribution breakdown for display.
+ */
+export interface ContextAttributionDisplay {
+  /** Category label */
+  category: string;
+  /** Token count */
+  tokens: number;
+  /** Percentage of total context */
+  percent: number;
+  /** CSS color for chart rendering */
+  color: string;
 }
 
 /**
@@ -336,4 +383,40 @@ export interface DashboardState {
 
   /** Response latency metrics for display */
   latencyDisplay?: LatencyDisplay;
+
+  /** Compaction events for display */
+  compactions?: CompactionEventDisplay[];
+
+  /** Context token attribution breakdown */
+  contextAttribution?: ContextAttributionDisplay[];
+}
+
+/**
+ * Individual tool call formatted for drill-down display.
+ */
+export interface ToolCallDetailDisplay {
+  /** Formatted time */
+  time: string;
+  /** Tool context description */
+  description: string;
+  /** Duration in human-readable format */
+  duration: string;
+  /** Whether this call was an error */
+  isError: boolean;
+  /** Error message if applicable */
+  errorMessage?: string;
+}
+
+/**
+ * Timeline filter state for noise filtering.
+ */
+export interface TimelineFilterState {
+  /** Show user messages */
+  showUser: boolean;
+  /** Show AI/assistant messages */
+  showAi: boolean;
+  /** Show system/noise messages */
+  showSystem: boolean;
+  /** Show sidechain events */
+  showSidechain: boolean;
 }

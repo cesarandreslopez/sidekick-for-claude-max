@@ -25,8 +25,9 @@ import { findActiveSession, findAllSessions, getSessionDirectory, discoverSessio
 import type { SessionGroup, SessionInfo } from '../types/dashboard';
 import { JsonlParser, extractTokenUsage } from './JsonlParser';
 import { scanSubagentDir } from './SubagentFileScanner';
-import { ClaudeSessionEvent, TokenUsage, ToolCall, SessionStats, ToolAnalytics, TimelineEvent, PendingToolCall, SubagentStats, TaskState, TrackedTask, TaskStatus, PendingUserRequest, ResponseLatency, LatencyStats } from '../types/claudeSession';
+import { ClaudeSessionEvent, TokenUsage, ToolCall, SessionStats, ToolAnalytics, TimelineEvent, PendingToolCall, SubagentStats, TaskState, TrackedTask, TaskStatus, PendingUserRequest, ResponseLatency, LatencyStats, CompactionEvent, ContextAttribution } from '../types/claudeSession';
 import { SessionSummary, ModelUsageRecord, ToolUsageRecord, createEmptyTokenTotals } from '../types/historicalData';
+import { estimateTokens } from '../utils/tokenEstimator';
 import { ModelPricingService } from './ModelPricingService';
 import { log, logError } from './Logger';
 import { extractTaskIdFromResult } from '../utils/taskHelpers';
@@ -156,6 +157,19 @@ export class SessionMonitor implements vscode.Disposable {
   /** Task-related tool names */
   private static readonly TASK_TOOLS = ['TaskCreate', 'TaskUpdate', 'TaskGet', 'TaskList'];
 
+  /** Creates an empty context attribution object */
+  private static emptyAttribution(): ContextAttribution {
+    return {
+      systemPrompt: 0,
+      userMessages: 0,
+      assistantResponses: 0,
+      toolInputs: 0,
+      toolOutputs: 0,
+      thinking: 0,
+      other: 0
+    };
+  }
+
   /** Pending user request awaiting assistant response */
   private pendingUserRequest: PendingUserRequest | null = null;
 
@@ -168,6 +182,15 @@ export class SessionMonitor implements vscode.Disposable {
   /** Timeout for stale pending requests (10 minutes) */
   private readonly STALE_REQUEST_TIMEOUT_MS = 10 * 60 * 1000;
 
+  /** Compaction events detected during session */
+  private compactionEvents: CompactionEvent[] = [];
+
+  /** Context token attribution breakdown */
+  private contextAttribution: ContextAttribution = SessionMonitor.emptyAttribution();
+
+  /** Previous context size (for compaction delta detection) */
+  private previousContextSize: number = 0;
+
   // Event emitters for external consumers
   private readonly _onTokenUsage = new vscode.EventEmitter<TokenUsage>();
   private readonly _onToolCall = new vscode.EventEmitter<ToolCall>();
@@ -177,6 +200,7 @@ export class SessionMonitor implements vscode.Disposable {
   private readonly _onTimelineEvent = new vscode.EventEmitter<TimelineEvent>();
   private readonly _onDiscoveryModeChange = new vscode.EventEmitter<boolean>();
   private readonly _onLatencyUpdate = new vscode.EventEmitter<LatencyStats>();
+  private readonly _onCompaction = new vscode.EventEmitter<CompactionEvent>();
 
   /** Fires when token usage is detected in session */
   readonly onTokenUsage = this._onTokenUsage.event;
@@ -201,6 +225,9 @@ export class SessionMonitor implements vscode.Disposable {
 
   /** Fires when response latency data is updated */
   readonly onLatencyUpdate = this._onLatencyUpdate.event;
+
+  /** Fires when a context compaction event is detected */
+  readonly onCompaction = this._onCompaction.event;
 
   /**
    * Creates a new SessionMonitor.
@@ -502,6 +529,9 @@ export class SessionMonitor implements vscode.Disposable {
     this.resetTaskState();
     this.pendingUserRequest = null;
     this.latencyRecords = [];
+    this.compactionEvents = [];
+    this.contextAttribution = SessionMonitor.emptyAttribution();
+    this.previousContextSize = 0;
 
     // Reset statistics
     this.stats = {
@@ -629,7 +659,9 @@ export class SessionMonitor implements vscode.Disposable {
         tasks: new Map(this.taskState.tasks),
         activeTaskId: this.taskState.activeTaskId
       } : undefined,
-      latencyStats: this.latencyRecords.length > 0 ? this.getLatencyStats() : undefined
+      latencyStats: this.latencyRecords.length > 0 ? this.getLatencyStats() : undefined,
+      compactionEvents: this.compactionEvents.length > 0 ? [...this.compactionEvents] : undefined,
+      contextAttribution: { ...this.contextAttribution }
     };
   }
 
@@ -1171,6 +1203,7 @@ export class SessionMonitor implements vscode.Disposable {
     this._onTimelineEvent.dispose();
     this._onDiscoveryModeChange.dispose();
     this._onLatencyUpdate.dispose();
+    this._onCompaction.dispose();
 
     // Reset state
     this.sessionPath = null;
@@ -1193,6 +1226,9 @@ export class SessionMonitor implements vscode.Disposable {
     this.resetTaskState();
     this.pendingUserRequest = null;
     this.latencyRecords = [];
+    this.compactionEvents = [];
+    this.contextAttribution = SessionMonitor.emptyAttribution();
+    this.previousContextSize = 0;
 
     log('SessionMonitor disposed');
   }
@@ -1576,7 +1612,40 @@ export class SessionMonitor implements vscode.Disposable {
 
       // Update current context window size
       // Context = input tokens + cache write + cache read (total tokens in context)
-      this.currentContextSize = usage.inputTokens + usage.cacheWriteTokens + usage.cacheReadTokens;
+      const newContextSize = usage.inputTokens + usage.cacheWriteTokens + usage.cacheReadTokens;
+
+      // Detect compaction: significant context size drop (>20% decrease)
+      if (this.previousContextSize > 0 && newContextSize < this.previousContextSize * 0.8) {
+        const compactionEvent: CompactionEvent = {
+          timestamp: new Date(event.timestamp),
+          contextBefore: this.previousContextSize,
+          contextAfter: newContextSize,
+          tokensReclaimed: this.previousContextSize - newContextSize
+        };
+        this.compactionEvents.push(compactionEvent);
+        this._onCompaction.fire(compactionEvent);
+        log(`Compaction detected: ${this.previousContextSize} -> ${newContextSize} (reclaimed ${compactionEvent.tokensReclaimed} tokens)`);
+
+        // Add compaction marker to timeline
+        this.timeline.unshift({
+          type: 'compaction',
+          timestamp: event.timestamp,
+          description: `Context compacted: ${Math.round(this.previousContextSize / 1000)}K -> ${Math.round(newContextSize / 1000)}K tokens (reclaimed ${Math.round(compactionEvent.tokensReclaimed / 1000)}K)`,
+          noiseLevel: 'system',
+          metadata: {
+            contextBefore: this.previousContextSize,
+            contextAfter: newContextSize,
+            tokensReclaimed: compactionEvent.tokensReclaimed
+          }
+        });
+        if (this.timeline.length > this.MAX_TIMELINE_EVENTS) {
+          this.timeline = this.timeline.slice(0, this.MAX_TIMELINE_EVENTS);
+        }
+        this._onTimelineEvent.fire(this.timeline[0]);
+      }
+
+      this.previousContextSize = newContextSize;
+      this.currentContextSize = newContextSize;
 
       // Track for burn rate calculation (include cache writes as they count toward quota)
       const totalTokensForBurn = usage.inputTokens + usage.outputTokens + usage.cacheWriteTokens;
@@ -1599,6 +1668,9 @@ export class SessionMonitor implements vscode.Disposable {
     if (event.type === 'user' && event.message?.content) {
       this.extractToolResultsFromContent(event.message.content, event.timestamp);
     }
+
+    // Track context token attribution by content category
+    this.updateContextAttribution(event);
 
     // Add to timeline
     this.addTimelineEvent(event);
@@ -1631,6 +1703,71 @@ export class SessionMonitor implements vscode.Disposable {
     }
 
     return false;
+  }
+
+  /**
+   * Updates context token attribution based on event content.
+   *
+   * Classifies event content into categories (system prompt, user messages,
+   * assistant responses, tool I/O, thinking) using heuristics and estimates
+   * token counts for each category.
+   */
+  private updateContextAttribution(event: ClaudeSessionEvent): void {
+    const content = event.message?.content;
+    if (!content) return;
+
+    if (event.type === 'user') {
+      // User events may contain: user prompts, tool_results, system-reminders
+      if (Array.isArray(content)) {
+        for (const block of content) {
+          if (!isTypedBlock(block)) continue;
+
+          if (block.type === 'tool_result') {
+            // Tool result content sent back in user message
+            const resultText = typeof block.content === 'string'
+              ? block.content
+              : JSON.stringify(block.content || '');
+            this.contextAttribution.toolOutputs += estimateTokens(resultText);
+          } else if (block.type === 'text' && typeof block.text === 'string') {
+            const text = block.text as string;
+            // Detect system prompt patterns
+            if (text.includes('<system-reminder>') || text.includes('CLAUDE.md') ||
+                text.includes('# System') || text.includes('<claude_code_instructions>')) {
+              this.contextAttribution.systemPrompt += estimateTokens(text);
+            } else {
+              this.contextAttribution.userMessages += estimateTokens(text);
+            }
+          }
+        }
+      } else if (typeof content === 'string') {
+        if (content.includes('<system-reminder>') || content.includes('CLAUDE.md')) {
+          this.contextAttribution.systemPrompt += estimateTokens(content);
+        } else {
+          this.contextAttribution.userMessages += estimateTokens(content);
+        }
+      }
+    } else if (event.type === 'assistant') {
+      if (Array.isArray(content)) {
+        for (const block of content) {
+          if (!isTypedBlock(block)) continue;
+
+          if (block.type === 'thinking' && typeof block.thinking === 'string') {
+            this.contextAttribution.thinking += estimateTokens(block.thinking as string);
+          } else if (block.type === 'tool_use') {
+            const inputText = JSON.stringify(block.input || {});
+            this.contextAttribution.toolInputs += estimateTokens(inputText);
+          } else if (block.type === 'text' && typeof block.text === 'string') {
+            this.contextAttribution.assistantResponses += estimateTokens(block.text as string);
+          }
+        }
+      } else if (typeof content === 'string') {
+        this.contextAttribution.assistantResponses += estimateTokens(content);
+      }
+    } else if (event.type === 'summary') {
+      // Summary events are compaction markers
+      const summaryText = typeof content === 'string' ? content : JSON.stringify(content);
+      this.contextAttribution.other += estimateTokens(summaryText);
+    }
   }
 
   /**
@@ -1849,10 +1986,14 @@ export class SessionMonitor implements vscode.Disposable {
         // Extract user prompt text
         const promptText = this.extractUserPromptText(event);
         if (promptText) {
+          // Classify noise: tool_result-only user events are system noise
+          const noiseLevel = this.classifyUserEventNoise(event);
           return {
             type: 'user_prompt',
             timestamp: event.timestamp,
             description: promptText,
+            noiseLevel,
+            isSidechain: event.isSidechain,
             metadata: {}
           };
         }
@@ -1867,6 +2008,8 @@ export class SessionMonitor implements vscode.Disposable {
             type: 'assistant_response',
             timestamp: event.timestamp,
             description: responseText.truncated,
+            noiseLevel: event.isSidechain ? 'noise' : 'ai' as const,
+            isSidechain: event.isSidechain,
             metadata: {
               model: event.message?.model,
               fullText: responseText.full !== responseText.truncated ? responseText.full : undefined
@@ -1895,9 +2038,21 @@ export class SessionMonitor implements vscode.Disposable {
           description: event.result?.is_error
             ? `${toolName} failed`
             : `${toolName} completed`,
+          noiseLevel: event.result?.is_error ? 'system' : 'ai' as const,
+          isSidechain: event.isSidechain,
           metadata: { isError: event.result?.is_error, toolName }
         };
       }
+
+      case 'summary':
+        // Summary events indicate context compaction
+        return {
+          type: 'compaction' as const,
+          timestamp: event.timestamp,
+          description: 'Context compacted (summary event)',
+          noiseLevel: 'system' as const,
+          metadata: {}
+        };
 
       default:
         return null;
@@ -2278,6 +2433,67 @@ export class SessionMonitor implements vscode.Disposable {
 
     this.taskState.tasks.set(taskId, task);
     log(`Created TrackedTask: ${taskId} - "${task.subject}"`);
+  }
+
+  /**
+   * Classifies the noise level of a user event.
+   *
+   * User events that contain only tool_result blocks (no actual user text)
+   * are classified as system noise. Events with user text content are 'user'.
+   * Sidechain events are always 'noise'.
+   *
+   * @param event - User session event
+   * @returns Noise classification
+   */
+  private classifyUserEventNoise(event: ClaudeSessionEvent): 'user' | 'system' | 'noise' {
+    if (event.isSidechain) return 'noise';
+
+    const content = event.message?.content;
+    if (!content || !Array.isArray(content)) return 'user';
+
+    // Check if the event contains only tool_result blocks (no user text)
+    const hasText = content.some((block: unknown) =>
+      isTypedBlock(block) && block.type === 'text' &&
+      typeof block.text === 'string' && (block.text as string).trim().length > 0
+    );
+    const hasToolResult = content.some((block: unknown) =>
+      isTypedBlock(block) && block.type === 'tool_result'
+    );
+
+    // System reminder patterns in text content
+    if (hasText) {
+      const textBlock = content.find((block: unknown) =>
+        isTypedBlock(block) && block.type === 'text' && typeof block.text === 'string'
+      );
+      if (textBlock && isTypedBlock(textBlock) && typeof textBlock.text === 'string') {
+        const text = textBlock.text as string;
+        if (text.includes('<system-reminder>') || text.includes('permission_prompt')) {
+          return 'system';
+        }
+      }
+    }
+
+    if (!hasText && hasToolResult) return 'system';
+
+    return 'user';
+  }
+
+  /**
+   * Gets compaction events that occurred during the session.
+   *
+   * @returns Array of compaction events
+   */
+  getCompactionEvents(): CompactionEvent[] {
+    return [...this.compactionEvents];
+  }
+
+  /**
+   * Gets context token attribution breakdown.
+   *
+   * @returns Current context attribution
+   */
+  getContextAttribution(): ContextAttribution {
+    return { ...this.contextAttribution };
   }
 
   /**

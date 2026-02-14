@@ -23,7 +23,7 @@ import type { HistoricalDataService } from '../services/HistoricalDataService';
 import type { ClaudeMdAdvisor } from '../services/ClaudeMdAdvisor';
 import type { QuotaState as DashboardQuotaState, HistoricalSummary, HistoricalDataPoint, LatencyDisplay, ClaudeMdSuggestionDisplay } from '../types/dashboard';
 import type { TokenUsage, SessionStats, ToolAnalytics, TimelineEvent, ToolCall, LatencyStats } from '../types/claudeSession';
-import type { DashboardMessage, DashboardWebviewMessage, DashboardState } from '../types/dashboard';
+import type { DashboardMessage, DashboardWebviewMessage, DashboardState, CompactionEventDisplay, ToolCallDetailDisplay } from '../types/dashboard';
 import type { SessionAnalyzer } from '../services/SessionAnalyzer';
 import type { AuthService } from '../services/AuthService';
 import type { SessionSummaryData } from '../types/sessionSummary';
@@ -175,6 +175,10 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
 
     this._disposables.push(
       this._sessionMonitor.onLatencyUpdate(stats => this._handleLatencyUpdate(stats))
+    );
+
+    this._disposables.push(
+      this._sessionMonitor.onCompaction(event => this._handleCompaction(event))
     );
 
     // Subscribe to quota updates if service available
@@ -355,7 +359,108 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
       case 'requestSessionSummary':
         this._handleRequestSessionSummary();
         break;
+
+      case 'searchTimeline':
+        this._handleSearchTimeline(message.query);
+        break;
+
+      case 'setTimelineFilter':
+        // Filters are applied client-side in the webview, but we track state
+        log(`Dashboard: timeline filter updated: ${JSON.stringify(message.filters)}`);
+        break;
+
+      case 'requestToolCallDetails':
+        this._handleToolCallDetails(message.toolName);
+        break;
     }
+  }
+
+  /**
+   * Handles timeline search from the webview.
+   *
+   * When a search query is provided, sends ALL timeline events
+   * (not capped at MAX_DISPLAY_TIMELINE) so the webview can filter them.
+   * When query is empty, reverts to the standard capped view.
+   *
+   * @param query - Search query string, empty to clear search
+   */
+  private _handleSearchTimeline(query: string): void {
+    if (query.trim().length === 0) {
+      // Clear search: revert to standard capped timeline
+      this._updateTimelineState();
+      this._sendTimelineToWebview();
+      return;
+    }
+
+    // When searching, send ALL timeline events from SessionMonitor
+    const stats = this._sessionMonitor.getStats();
+    const allTimeline = stats.timeline;
+
+    // Convert all events to display format (no cap)
+    const allEvents = allTimeline.map(e => ({
+      type: e.type as 'user_prompt' | 'tool_call' | 'tool_result' | 'error' | 'assistant_response' | 'compaction',
+      time: new Date(e.timestamp).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
+      description: e.description,
+      isError: e.metadata?.isError,
+      fullText: e.metadata?.fullText,
+      noiseLevel: e.noiseLevel,
+      isSidechain: e.isSidechain,
+      contextBefore: e.metadata?.contextBefore,
+      contextAfter: e.metadata?.contextAfter,
+      tokensReclaimed: e.metadata?.tokensReclaimed
+    }));
+
+    this._postMessage({
+      type: 'updateTimeline',
+      events: allEvents
+    });
+  }
+
+  /**
+   * Handles tool call drill-down request.
+   * Sends individual tool calls for a specific tool name.
+   *
+   * @param toolName - Name of the tool to get details for
+   */
+  private _handleToolCallDetails(toolName: string): void {
+    const stats = this._sessionMonitor.getStats();
+    const calls = stats.toolCalls
+      .filter(tc => tc.name === toolName)
+      .map(tc => {
+        const durationMs = tc.duration ?? 0;
+        let durationStr: string;
+        if (durationMs < 1000) {
+          durationStr = durationMs + 'ms';
+        } else {
+          durationStr = (durationMs / 1000).toFixed(1) + 's';
+        }
+
+        // Build description from tool input
+        let desc = toolName;
+        if (tc.input?.file_path) {
+          desc = String(tc.input.file_path).split('/').pop() || desc;
+        } else if (tc.input?.command) {
+          const cmd = String(tc.input.command);
+          desc = cmd.length > 60 ? cmd.substring(0, 57) + '...' : cmd;
+        } else if (tc.input?.pattern) {
+          desc = String(tc.input.pattern);
+        }
+
+        return {
+          time: tc.timestamp.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
+          description: desc,
+          duration: durationStr,
+          isError: tc.isError ?? false,
+          errorMessage: tc.errorMessage
+        } as ToolCallDetailDisplay;
+      })
+      .reverse(); // Most recent first
+
+    this._postMessage({
+      type: 'toolCallDetails',
+      toolName,
+      calls
+    });
   }
 
   /**
@@ -565,6 +670,11 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
       // Tool Efficiency
       const toolEfficiency = this._summaryService.getToolEfficiency(stats);
       this._postMessage({ type: 'updateToolEfficiency', data: toolEfficiency });
+
+      // Context Attribution
+      if (this._state.contextAttribution && this._state.contextAttribution.length > 0) {
+        this._postMessage({ type: 'updateContextAttribution', attribution: this._state.contextAttribution });
+      }
     }, 2000);
   }
 
@@ -902,11 +1012,16 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
    */
   private _updateTimelineState(): void {
     this._state.timeline = this._timeline.map(e => ({
-      type: e.type as 'user_prompt' | 'tool_call' | 'tool_result' | 'error' | 'assistant_response',
+      type: e.type as 'user_prompt' | 'tool_call' | 'tool_result' | 'error' | 'assistant_response' | 'compaction',
       time: new Date(e.timestamp).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
       description: e.description,
       isError: e.metadata?.isError,
-      fullText: e.metadata?.fullText
+      fullText: e.metadata?.fullText,
+      noiseLevel: e.noiseLevel,
+      isSidechain: e.isSidechain,
+      contextBefore: e.metadata?.contextBefore,
+      contextAfter: e.metadata?.contextAfter,
+      tokensReclaimed: e.metadata?.tokensReclaimed
     }));
   }
 
@@ -998,6 +1113,32 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
     const display = this._formatLatencyDisplay(stats);
     this._state.latencyDisplay = display;
     this._postMessage({ type: 'updateLatency', latency: display });
+  }
+
+  /**
+   * Handles compaction events from SessionMonitor.
+   * Updates the compaction display list in the dashboard state.
+   */
+  private _handleCompaction(event: { contextBefore: number; contextAfter: number; tokensReclaimed: number; timestamp: Date }): void {
+    const display: CompactionEventDisplay = {
+      time: event.timestamp.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
+      contextBefore: event.contextBefore,
+      contextAfter: event.contextAfter,
+      tokensReclaimed: event.tokensReclaimed,
+      reclaimedPercent: event.contextBefore > 0
+        ? Math.round((event.tokensReclaimed / event.contextBefore) * 100)
+        : 0
+    };
+
+    if (!this._state.compactions) {
+      this._state.compactions = [];
+    }
+    this._state.compactions.push(display);
+
+    this._postMessage({
+      type: 'updateCompactions',
+      compactions: this._state.compactions
+    });
   }
 
   /**
@@ -1120,6 +1261,57 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
     // Sync latency stats
     if (stats.latencyStats) {
       this._state.latencyDisplay = this._formatLatencyDisplay(stats.latencyStats);
+    }
+
+    // Sync compaction events
+    if (stats.compactionEvents && stats.compactionEvents.length > 0) {
+      this._state.compactions = stats.compactionEvents.map(e => ({
+        time: e.timestamp.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
+        contextBefore: e.contextBefore,
+        contextAfter: e.contextAfter,
+        tokensReclaimed: e.tokensReclaimed,
+        reclaimedPercent: e.contextBefore > 0
+          ? Math.round((e.tokensReclaimed / e.contextBefore) * 100)
+          : 0
+      }));
+    }
+
+    // Sync context attribution
+    if (stats.contextAttribution) {
+      const attr = stats.contextAttribution;
+      const total = attr.systemPrompt + attr.userMessages + attr.assistantResponses +
+        attr.toolInputs + attr.toolOutputs + attr.thinking + attr.other;
+
+      if (total > 0) {
+        const COLORS = {
+          systemPrompt: '#e06c75',
+          userMessages: '#61afef',
+          assistantResponses: '#98c379',
+          toolInputs: '#c678dd',
+          toolOutputs: '#d19a66',
+          thinking: '#56b6c2',
+          other: '#abb2bf'
+        };
+        const LABELS: Record<string, string> = {
+          systemPrompt: 'System Prompt',
+          userMessages: 'User Messages',
+          assistantResponses: 'Assistant',
+          toolInputs: 'Tool Inputs',
+          toolOutputs: 'Tool Outputs',
+          thinking: 'Thinking',
+          other: 'Other'
+        };
+
+        this._state.contextAttribution = Object.entries(attr)
+          .filter(([, tokens]) => tokens > 0)
+          .map(([category, tokens]) => ({
+            category: LABELS[category] || category,
+            tokens,
+            percent: Math.round((tokens / total) * 100),
+            color: COLORS[category as keyof typeof COLORS] || '#abb2bf'
+          }))
+          .sort((a, b) => b.tokens - a.tokens);
+      }
     }
 
     // Send richer panel updates (debounced)
@@ -2476,11 +2668,155 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
       color: var(--vscode-editorWarning-foreground);
     }
 
+    /* Timeline controls (search + filters) */
+    .timeline-controls {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      margin-bottom: 6px;
+    }
+
+    .timeline-search {
+      width: 100%;
+      padding: 4px 8px;
+      font-size: 11px;
+      background: var(--vscode-input-background);
+      color: var(--vscode-input-foreground);
+      border: 1px solid var(--vscode-input-border);
+      border-radius: 3px;
+      outline: none;
+    }
+
+    .timeline-search:focus {
+      border-color: var(--vscode-focusBorder);
+    }
+
+    .timeline-search::placeholder {
+      color: var(--vscode-input-placeholderForeground);
+    }
+
+    .timeline-filters {
+      display: flex;
+      gap: 8px;
+      font-size: 10px;
+    }
+
+    .filter-toggle {
+      display: flex;
+      align-items: center;
+      gap: 3px;
+      color: var(--vscode-descriptionForeground);
+      cursor: pointer;
+    }
+
+    .filter-toggle input[type="checkbox"] {
+      width: 12px;
+      height: 12px;
+    }
+
+    /* Compaction display */
+    /* Context Attribution */
+    #context-attribution-chart {
+      display: flex;
+      height: 20px;
+      border-radius: 3px;
+      overflow: hidden;
+      margin: 8px 0 6px;
+    }
+
+    #context-attribution-chart .attr-bar {
+      transition: width 0.3s ease;
+      min-width: 2px;
+    }
+
+    .attribution-legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px 10px;
+      font-size: 10px;
+    }
+
+    .attribution-legend .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .attribution-legend .legend-swatch {
+      width: 8px;
+      height: 8px;
+      border-radius: 2px;
+      flex-shrink: 0;
+    }
+
+    .attribution-legend .legend-tokens {
+      color: var(--vscode-descriptionForeground);
+    }
+
+    .compaction-list {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .compaction-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 8px;
+      font-size: 11px;
+      background: var(--vscode-inputValidation-warningBackground);
+      border-left: 3px solid var(--vscode-editorWarning-foreground);
+      border-radius: 3px;
+    }
+
+    .compaction-item .compaction-time {
+      color: var(--vscode-descriptionForeground);
+      white-space: nowrap;
+      min-width: 50px;
+    }
+
+    .compaction-item .compaction-delta {
+      flex: 1;
+    }
+
+    .compaction-item .compaction-reclaimed {
+      color: var(--vscode-charts-green);
+      font-weight: 500;
+      white-space: nowrap;
+    }
+
+    /* Timeline item noise classification */
+    .timeline-item.compaction {
+      background: var(--vscode-inputValidation-warningBackground);
+      border-left: 3px solid var(--vscode-editorWarning-foreground);
+    }
+
+    .timeline-item.sidechain {
+      opacity: 0.6;
+    }
+
+    .timeline-item.noise {
+      opacity: 0.5;
+      font-style: italic;
+    }
+
+    .timeline-item.system-event {
+      opacity: 0.7;
+      border-left: 2px solid var(--vscode-descriptionForeground);
+    }
+
+    .timeline-search-count {
+      font-size: 10px;
+      color: var(--vscode-descriptionForeground);
+      padding: 2px 0;
+    }
+
     .timeline-list {
       display: flex;
       flex-direction: column;
       gap: 4px;
-      max-height: 200px;
+      max-height: 400px;
       overflow-y: auto;
     }
 
@@ -3204,6 +3540,37 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
           <h3 class="details-title">Session Activity</h3>
         </div>
         <div class="details-content">
+          <!-- Context Attribution -->
+          <div class="section" id="context-attribution-section" style="display: none;">
+            <div class="section-title section-title-with-info">
+              Context Attribution
+              <span class="info-icon">?<div class="tooltip">
+                <p>Estimated breakdown of where context tokens are spent.</p>
+                <p><strong>System Prompt:</strong> CLAUDE.md, system reminders</p>
+                <p><strong>User Messages:</strong> Your prompts and text</p>
+                <p><strong>Assistant:</strong> Claude's text responses</p>
+                <p><strong>Tool I/O:</strong> Tool inputs and outputs</p>
+                <p><strong>Thinking:</strong> Extended thinking blocks</p>
+              </div></span>
+            </div>
+            <div id="context-attribution-chart"></div>
+            <div class="attribution-legend" id="attribution-legend"></div>
+          </div>
+
+          <!-- Compaction Events -->
+          <div class="section" id="compaction-section" style="display: none;">
+            <div class="section-title section-title-with-info">
+              Context Compactions
+              <span class="info-icon">?<div class="tooltip">
+                <p>Context compaction occurs when the context window fills up.</p>
+                <p>Claude summarizes the conversation to reclaim space.</p>
+                <p><strong>Before/After:</strong> Context size in tokens</p>
+                <p><strong>Reclaimed:</strong> Tokens freed by compaction</p>
+              </div></span>
+            </div>
+            <div class="compaction-list" id="compaction-list"></div>
+          </div>
+
           <div class="section">
             <div class="section-title section-title-with-info">
               Activity Timeline
@@ -3212,7 +3579,23 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
                 <p><strong>User prompts:</strong> Messages you sent</p>
                 <p><strong>Tool calls:</strong> Actions Claude performed</p>
                 <p><strong>Results:</strong> Outcomes of tool executions</p>
+                <p><strong>Compaction:</strong> Context window was compacted</p>
               </div></span>
+            </div>
+            <!-- Timeline Search & Filters -->
+            <div class="timeline-controls">
+              <input type="text" id="timeline-search" class="timeline-search" placeholder="Search timeline..." />
+              <div class="timeline-filters" id="timeline-filters">
+                <label class="filter-toggle" title="User messages">
+                  <input type="checkbox" data-filter="user" checked /> User
+                </label>
+                <label class="filter-toggle" title="AI responses">
+                  <input type="checkbox" data-filter="ai" checked /> AI
+                </label>
+                <label class="filter-toggle" title="System/noise events">
+                  <input type="checkbox" data-filter="system" /> System
+                </label>
+              </div>
             </div>
             <div class="timeline-list" id="timeline-list">
               <div class="timeline-item">
@@ -4205,7 +4588,7 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
             ? tool.avgDuration + 'ms'
             : (tool.avgDuration / 1000).toFixed(1) + 's';
 
-          return '<div class="tool-item">' +
+          return '<div class="tool-item" data-tool-name="' + escapeHtml(tool.name) + '" style="cursor: pointer;">' +
             '<div class="tool-header">' +
               '<span class="tool-name">' + tool.name + '</span>' +
               '<span class="tool-calls">' + tool.totalCalls + ' calls' +
@@ -4218,37 +4601,149 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
               '</span>' +
               '<span class="avg-duration">avg ' + avgDuration + '</span>' +
             '</div>' +
+            '<div class="tool-drilldown" style="display: none;"></div>' +
           '</div>';
         }).join('');
+
+        // Add click handlers for drill-down
+        toolListEl.querySelectorAll('.tool-item[data-tool-name]').forEach(function(item) {
+          item.addEventListener('click', function() {
+            var toolName = item.getAttribute('data-tool-name');
+            var drilldown = item.querySelector('.tool-drilldown');
+            if (!drilldown) return;
+
+            if (drilldown.style.display === 'none') {
+              // Request details from extension
+              vscode.postMessage({ type: 'requestToolCallDetails', toolName: toolName });
+              drilldown.innerHTML = '<div style="padding: 4px; font-size: 10px; color: var(--vscode-descriptionForeground);">Loading...</div>';
+              drilldown.style.display = 'block';
+            } else {
+              drilldown.style.display = 'none';
+            }
+          });
+        });
       }
 
       /**
-       * Updates timeline display.
+       * Renders tool call details in the drill-down area.
+       */
+      function renderToolCallDetails(toolName, calls) {
+        var toolListEl = document.getElementById('tool-list');
+        if (!toolListEl) return;
+
+        var item = toolListEl.querySelector('.tool-item[data-tool-name="' + escapeHtml(toolName) + '"]');
+        if (!item) return;
+
+        var drilldown = item.querySelector('.tool-drilldown');
+        if (!drilldown) return;
+
+        if (!calls || calls.length === 0) {
+          drilldown.innerHTML = '<div style="padding: 4px; font-size: 10px;">No calls recorded</div>';
+          return;
+        }
+
+        drilldown.innerHTML = calls.slice(0, 20).map(function(call) {
+          var errorStyle = call.isError ? 'color: var(--vscode-errorForeground);' : '';
+          return '<div style="display: flex; gap: 6px; padding: 2px 4px; font-size: 10px; border-bottom: 1px solid var(--vscode-panel-border); ' + errorStyle + '">' +
+            '<span style="min-width: 45px; color: var(--vscode-descriptionForeground);">' + call.time + '</span>' +
+            '<span style="flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">' + escapeHtml(call.description) + '</span>' +
+            '<span style="min-width: 40px; text-align: right;">' + call.duration + '</span>' +
+          '</div>';
+        }).join('') +
+        (calls.length > 20 ? '<div style="padding: 2px 4px; font-size: 10px; color: var(--vscode-descriptionForeground);">...and ' + (calls.length - 20) + ' more</div>' : '');
+      }
+
+      // Current timeline events cache for client-side filtering
+      var currentTimelineEvents = [];
+
+      // Current filter state
+      var timelineFilters = { showUser: true, showAi: true, showSystem: false, showSidechain: false };
+
+      /**
+       * Updates timeline display with search and filter support.
        */
       function updateTimeline(events) {
+        currentTimelineEvents = events || [];
+        renderFilteredTimeline();
+      }
+
+      /**
+       * Renders the timeline with current search query and filters applied.
+       */
+      function renderFilteredTimeline() {
         const timelineEl = document.getElementById('timeline-list');
         if (!timelineEl) return;
 
-        if (!events || events.length === 0) {
+        var events = currentTimelineEvents;
+        var searchQuery = '';
+        var searchEl = document.getElementById('timeline-search');
+        if (searchEl) {
+          searchQuery = searchEl.value.trim().toLowerCase();
+        }
+
+        // Apply filters
+        var filtered = events.filter(function(event) {
+          // Noise-level filtering
+          var noise = event.noiseLevel || 'ai';
+          if (noise === 'user' && !timelineFilters.showUser) return false;
+          if (noise === 'ai' && !timelineFilters.showAi) return false;
+          if ((noise === 'system' || noise === 'noise') && !timelineFilters.showSystem) return false;
+          if (event.isSidechain && !timelineFilters.showSidechain) return false;
+
+          // Search filtering
+          if (searchQuery) {
+            var desc = (event.description || '').toLowerCase();
+            var full = (event.fullText || '').toLowerCase();
+            if (desc.indexOf(searchQuery) === -1 && full.indexOf(searchQuery) === -1) {
+              return false;
+            }
+          }
+
+          return true;
+        });
+
+        if (filtered.length === 0) {
           timelineEl.innerHTML = '<div class="timeline-item">' +
             '<span class="time">--:--</span>' +
-            '<span class="description">No activity yet</span>' +
+            '<span class="description">' + (searchQuery ? 'No matching events' : 'No activity yet') + '</span>' +
           '</div>';
           return;
         }
 
+        // Show result count when searching
+        var countHtml = '';
+        if (searchQuery) {
+          countHtml = '<div class="timeline-search-count">Showing ' + filtered.length + ' of ' + events.length + ' events</div>';
+        }
+
         const iconMap = {
-          'user_prompt': '💬',
-          'tool_call': '🔧',
-          'tool_result': '✓',
-          'error': '❌',
-          'assistant_response': '🤖'
+          'user_prompt': '\uD83D\uDCAC',
+          'tool_call': '\uD83D\uDD27',
+          'tool_result': '\u2713',
+          'error': '\u274C',
+          'assistant_response': '\uD83E\uDD16',
+          'compaction': '\u26A0'
         };
 
-        timelineEl.innerHTML = events.map(function(event, idx) {
-          const icon = iconMap[event.type] || '$(circle)';
-          const errorClass = event.isError ? ' error' : '';
-          const assistantClass = event.type === 'assistant_response' ? ' assistant' : '';
+        timelineEl.innerHTML = countHtml + filtered.map(function(event, idx) {
+          const icon = iconMap[event.type] || '\u25CF';
+          var classes = 'timeline-item';
+          if (event.isError) classes += ' error';
+          if (event.type === 'assistant_response') classes += ' assistant';
+          if (event.type === 'compaction') classes += ' compaction';
+          if (event.isSidechain) classes += ' sidechain';
+          if (event.noiseLevel === 'noise') classes += ' noise';
+          if (event.noiseLevel === 'system') classes += ' system-event';
+
+          // Highlight search matches
+          var desc = escapeHtml(event.description);
+          if (searchQuery) {
+            try {
+              var escaped = searchQuery.replace(/[-\\/^$*+?.()|[\\]{}]/g, String.fromCharCode(92) + '$&');
+              var re = new RegExp('(' + escaped + ')', 'gi');
+              desc = desc.replace(re, '<mark>$1</mark>');
+            } catch(ex) { /* invalid regex, skip highlighting */ }
+          }
 
           // Add expand link for assistant responses with full text
           let expandLink = '';
@@ -4256,16 +4751,16 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
             expandLink = ' <span class="expand-link" data-idx="' + idx + '" data-expanded="false">[more]</span>';
           }
 
-          return '<div class="timeline-item' + errorClass + assistantClass + '" data-idx="' + idx + '">' +
+          return '<div class="' + classes + '" data-idx="' + idx + '">' +
             '<span class="time">' + event.time + '</span>' +
             '<span class="icon">' + icon + '</span>' +
-            '<span class="description" data-truncated="' + escapeHtml(event.description) + '" data-full="' + (event.fullText ? escapeHtml(event.fullText) : '') + '">' + escapeHtml(event.description) + expandLink + '</span>' +
+            '<span class="description" data-truncated="' + escapeHtml(event.description) + '" data-full="' + (event.fullText ? escapeHtml(event.fullText) : '') + '">' + desc + expandLink + '</span>' +
           '</div>';
         }).join('');
 
         // Add click handlers for expand/collapse
         timelineEl.querySelectorAll('.expand-link').forEach(function(link) {
-          link.addEventListener('click', function(e) {
+          link.addEventListener('click', function handleExpand(e) {
             e.stopPropagation();
             const idx = link.getAttribute('data-idx');
             const item = timelineEl.querySelector('.timeline-item[data-idx="' + idx + '"]');
@@ -4279,22 +4774,81 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
             const full = descEl.getAttribute('data-full');
 
             if (isExpanded) {
-              // Collapse
               descEl.innerHTML = truncated + ' <span class="expand-link" data-idx="' + idx + '" data-expanded="false">[more]</span>';
-              link.setAttribute('data-expanded', 'false');
             } else {
-              // Expand
               descEl.innerHTML = full + ' <span class="expand-link" data-idx="' + idx + '" data-expanded="true">[less]</span>';
-              link.setAttribute('data-expanded', 'true');
             }
 
-            // Re-attach click handler to new link
             const newLink = descEl.querySelector('.expand-link');
             if (newLink) {
-              newLink.addEventListener('click', arguments.callee);
+              newLink.addEventListener('click', handleExpand);
             }
           });
         });
+      }
+
+      /**
+       * Updates compaction events display.
+       */
+      function updateCompactions(compactions) {
+        var sectionEl = document.getElementById('compaction-section');
+        var listEl = document.getElementById('compaction-list');
+        if (!sectionEl || !listEl) return;
+
+        if (!compactions || compactions.length === 0) {
+          sectionEl.style.display = 'none';
+          return;
+        }
+
+        sectionEl.style.display = 'block';
+        listEl.innerHTML = compactions.map(function(c) {
+          var beforeK = Math.round(c.contextBefore / 1000);
+          var afterK = Math.round(c.contextAfter / 1000);
+          var reclaimedK = Math.round(c.tokensReclaimed / 1000);
+          return '<div class="compaction-item">' +
+            '<span class="compaction-time">' + c.time + '</span>' +
+            '<span class="compaction-delta">' + beforeK + 'K → ' + afterK + 'K</span>' +
+            '<span class="compaction-reclaimed">-' + reclaimedK + 'K (' + c.reclaimedPercent + '%)</span>' +
+          '</div>';
+        }).join('');
+      }
+
+      /**
+       * Updates context attribution stacked bar + legend.
+       */
+      function updateContextAttribution(attribution) {
+        var sectionEl = document.getElementById('context-attribution-section');
+        var chartEl = document.getElementById('context-attribution-chart');
+        var legendEl = document.getElementById('attribution-legend');
+        if (!sectionEl || !chartEl || !legendEl) return;
+
+        if (!attribution || attribution.length === 0) {
+          sectionEl.style.display = 'none';
+          return;
+        }
+
+        sectionEl.style.display = 'block';
+
+        // Stacked bar
+        chartEl.innerHTML = attribution.map(function(a) {
+          return '<div class="attr-bar" style="width:' + a.percent + '%;background:' + a.color + '" title="' +
+            a.category + ': ' + formatTokensShort(a.tokens) + ' (' + a.percent + '%)"></div>';
+        }).join('');
+
+        // Legend
+        legendEl.innerHTML = attribution.map(function(a) {
+          return '<span class="legend-item">' +
+            '<span class="legend-swatch" style="background:' + a.color + '"></span>' +
+            '<span>' + a.category + '</span>' +
+            '<span class="legend-tokens">' + formatTokensShort(a.tokens) + ' (' + a.percent + '%)</span>' +
+          '</span>';
+        }).join('');
+      }
+
+      function formatTokensShort(tokens) {
+        if (tokens >= 1000000) return (tokens / 1000000).toFixed(1) + 'M';
+        if (tokens >= 1000) return Math.round(tokens / 1000) + 'K';
+        return String(tokens);
       }
 
       /**
@@ -4542,6 +5096,16 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
         // Update file changes
         updateFileChanges(state.fileChangeSummary);
 
+        // Update compactions
+        if (state.compactions) {
+          updateCompactions(state.compactions);
+        }
+
+        // Update context attribution
+        if (state.contextAttribution) {
+          updateContextAttribution(state.contextAttribution);
+        }
+
         // Update timestamp
         if (state.lastUpdated && lastUpdatedEl) {
           const date = new Date(state.lastUpdated);
@@ -4675,8 +5239,56 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
               narrErrEl.style.display = 'block';
             }
             break;
+
+          case 'updateCompactions':
+            updateCompactions(message.compactions);
+            break;
+
+          case 'updateContextAttribution':
+            updateContextAttribution(message.attribution);
+            break;
+
+          case 'toolCallDetails':
+            renderToolCallDetails(message.toolName, message.calls);
+            break;
         }
       });
+
+      // Timeline search input handler (debounced)
+      var searchTimer = null;
+      var searchInput = document.getElementById('timeline-search');
+      if (searchInput) {
+        searchInput.addEventListener('input', function() {
+          if (searchTimer) clearTimeout(searchTimer);
+          searchTimer = setTimeout(function() {
+            var query = searchInput.value.trim();
+            if (query.length > 0) {
+              // Request all events from extension for search
+              vscode.postMessage({ type: 'searchTimeline', query: query });
+            } else {
+              // Clear search - re-render with current events
+              renderFilteredTimeline();
+            }
+          }, 300);
+        });
+      }
+
+      // Timeline filter checkbox handlers
+      var filtersEl = document.getElementById('timeline-filters');
+      if (filtersEl) {
+        filtersEl.querySelectorAll('input[type="checkbox"]').forEach(function(cb) {
+          cb.addEventListener('change', function() {
+            var filterName = cb.getAttribute('data-filter');
+            if (filterName === 'user') timelineFilters.showUser = cb.checked;
+            if (filterName === 'ai') timelineFilters.showAi = cb.checked;
+            if (filterName === 'system') {
+              timelineFilters.showSystem = cb.checked;
+              timelineFilters.showSidechain = cb.checked;
+            }
+            renderFilteredTimeline();
+          });
+        });
+      }
 
       // Session navigator event handlers
       if (sessionListEl) {

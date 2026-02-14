@@ -2,7 +2,7 @@
   "name": "sidekick-for-max",
   "displayName": "Sidekick for Max",
   "description": "AI-powered code completions, transforms, commit messages, RSVP speed reading, and Claude Code session monitoring - all using your Claude Max subscription at no extra cost.",
-  "version": "0.8.5",
+  "version": "0.9.0",
   "publisher": "CesarAndresLopez",
   "author": {
     "name": "Cesar Andres Lopez",
@@ -300,6 +300,37 @@
           "default": true,
           "description": "Enable Claude Code session monitoring for token usage tracking"
         },
+        "sidekick.notifications.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable session monitoring notifications (credential access, destructive commands, compaction, etc.)"
+        },
+        "sidekick.notifications.triggers.env-access": {
+          "type": "boolean",
+          "default": true,
+          "description": "Notify when Claude accesses credential files (.env, .pem, .key, etc.)"
+        },
+        "sidekick.notifications.triggers.destructive-cmd": {
+          "type": "boolean",
+          "default": true,
+          "description": "Notify when Claude runs destructive commands (rm -rf, git push --force, etc.)"
+        },
+        "sidekick.notifications.triggers.tool-error": {
+          "type": "boolean",
+          "default": true,
+          "description": "Notify when Claude encounters multiple consecutive tool errors"
+        },
+        "sidekick.notifications.triggers.compaction": {
+          "type": "boolean",
+          "default": true,
+          "description": "Notify when context window is compacted (conversation summarized)"
+        },
+        "sidekick.notifications.tokenThreshold": {
+          "type": "number",
+          "default": 500000,
+          "minimum": 0,
+          "description": "Show a warning when session token usage crosses this threshold (0 to disable). Warns at each multiple."
+        },
         "sidekick.timeouts": {
           "type": "object",
           "default": {
@@ -517,6 +548,18 @@
       {
         "command": "sidekick.openDashboard",
         "title": "Sidekick: Open Session Dashboard"
+      },
+      {
+        "command": "sidekick.openConversation",
+        "title": "Sidekick: View Session Conversation"
+      },
+      {
+        "command": "sidekick.searchSessions",
+        "title": "Sidekick: Search Across Sessions"
+      },
+      {
+        "command": "sidekick.openToolInspector",
+        "title": "Sidekick: Open Tool Inspector"
       },
       {
         "command": "sidekick.startMonitoring",
@@ -787,6 +830,7 @@
     "watch": "node esbuild.js --watch",
     "lint": "eslint src/",
     "lint:fix": "eslint src/ --fix",
+    "package": "vsce package --no-dependencies",
     "test": "vitest run",
     "test:watch": "vitest"
   },
