@@ -16,30 +16,30 @@ Sidekick gives you visibility into what Claude is doing, quick AI assistance for
 
 ## Why Use This Extension?
 
-**Maximize your Claude Max subscription value.**
+**Stop paying twice for AI coding tools.**
 
-Most Claude Max subscribers don't use their full 5-hour usage allocation. Sidekick helps you get more from what you're already paying for:
+You're already spending $100-200/month on Claude Max. Sidekick lets you drop your Copilot subscription and get completions, transforms, and session monitoring from the same plan:
 
 | Without This Extension | With This Extension |
 |------------------------|---------------------|
 | Pay $100-200/mo for Claude Max | Same subscription |
 | Pay $10-19/mo extra for Copilot | No additional cost |
-| Tokens sitting unused between CLI sessions | Continuous inline assistance |
-| No visibility into Claude Code sessions | Real-time monitoring dashboard |
+| No visibility into token usage | Real-time monitoring dashboard |
+| Blind to what Claude is doing | Activity timeline, cost tracking, mind map |
 
 **Designed to complement Claude Code CLI, not replace it:**
 - Use **Claude Code CLI** for complex, multi-file refactoring and agentic tasks
 - Use **Sidekick** for fast inline completions, quick code transforms, and monitoring your CLI sessions
-- **Session Monitor** shows token usage, costs, activity timeline, and exactly what Claude is doing—perfect for keeping an eye on long-running tasks
+- **Session Monitor** shows token usage, costs, activity timeline, and exactly what Claude is doing—essential for understanding where your quota goes, especially if you're hitting limits
 
-The extension uses Haiku by default for inline completions - it's fast, responsive, and uses minimal quota so you still have capacity for your CLI workflows.
+The extension uses Haiku by default for inline completions—fast, responsive, and lightweight enough that they won't meaningfully impact your Claude Code quota.
 
 ## Prerequisites
 
 - **Claude Max subscription** (Recommended) OR **Anthropic API key**
 - **Claude Code CLI** installed and authenticated (for Max subscription mode)
 
-> **Why Max subscription is recommended:** Inline completions fire frequently as you type. With an API key, these per-token costs add up quickly. With Max ($100-200/month), you're already paying for the tokens—Sidekick just helps you use your unused capacity. No surprise bills.
+> **Why Max subscription is recommended:** Inline completions fire frequently as you type. With an API key, these per-token costs add up quickly. With Max ($100-200/month), completions are covered by your existing plan—no surprise bills. Haiku-powered completions are lightweight enough that they won't meaningfully impact your Claude Code quota.
 
 ## Installation
 
