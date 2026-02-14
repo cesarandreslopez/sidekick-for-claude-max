@@ -81,7 +81,10 @@ Monitor your Claude Code sessions in real-time with a comprehensive analytics da
   - Token usage with explanatory tooltips and quota projections showing estimated usage at reset
   - Context window gauge showing input/output usage vs. limits
   - Activity timeline with user prompts, tool calls, and errors
+  - Collapsible session navigator to save vertical space when not switching sessions
   - Session selector to switch between active sessions
+
+![Session navigator](assets/session_explorer.png)
   - Tool analytics showing what operations Claude is performing
   - **Session Summary** with AI narrative generation and progress feedback
   - Organized Session tab with three collapsible groups: Session Activity, Performance & Cost, Tasks & Recovery

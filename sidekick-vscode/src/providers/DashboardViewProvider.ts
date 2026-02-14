@@ -232,6 +232,7 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
       () => {
         if (webviewView.visible) {
           this._sendStateToWebview();
+          this._sendSessionList();
           // Start quota refresh when visible
           this._quotaService?.startRefresh();
         } else {
@@ -281,6 +282,11 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
         break;
 
       case 'refreshSessions':
+        this._sendSessionList();
+        break;
+
+      case 'togglePin':
+        this._sessionMonitor.togglePin();
         this._sendSessionList();
         break;
 
@@ -1199,16 +1205,12 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
    * Sends the list of available sessions to the webview.
    */
   private _sendSessionList(): void {
-    const sessions = this._sessionMonitor.getAvailableSessions();
+    const groups = this._sessionMonitor.getAllSessionsGrouped();
     const customPath = this._sessionMonitor.getCustomPath();
     this._postMessage({
       type: 'updateSessionList',
-      sessions: sessions.map(s => ({
-        path: s.path,
-        filename: s.filename,
-        modifiedTime: s.modifiedTime.toISOString(),
-        isCurrent: s.isCurrent
-      })),
+      groups,
+      isPinned: this._sessionMonitor.isPinned(),
       isUsingCustomPath: this._sessionMonitor.isUsingCustomPath(),
       customPathDisplay: customPath ? this._getShortPath(customPath) : null
     });
@@ -1226,6 +1228,18 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
       return '/' + encoded.substring(1).replace(/-/g, '/');
     }
     return encoded.replace(/-/g, '/');
+  }
+
+  /**
+   * Serializes data to JSON that's safe to embed in an HTML <script> tag.
+   * Escapes sequences that would break HTML parsing or template literals.
+   */
+  private _safeJsonForScript(data: unknown): string {
+    return JSON.stringify(data)
+      .replace(/</g, '\\u003c')     // Prevents </script> breaking HTML parser
+      .replace(/>/g, '\\u003e')     // Prevents --> breaking HTML comments
+      .replace(/\u2028/g, '\\u2028') // Line separator (breaks JS strings)
+      .replace(/\u2029/g, '\\u2029'); // Paragraph separator (breaks JS strings)
   }
 
   /**
@@ -1261,6 +1275,11 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
       vscode.Uri.joinPath(this._extensionUri, 'images', 'icon.png')
     );
 
+    // Pre-compute session groups for initial render (avoids reliance on postMessage)
+    const initialGroups = this._sessionMonitor.getAllSessionsGrouped();
+    const initialIsPinned = this._sessionMonitor.isPinned();
+    const initialCustomPath = this._sessionMonitor.getCustomPath();
+    const initialIsUsingCustomPath = this._sessionMonitor.isUsingCustomPath();
 
     return `<!DOCTYPE html>
 <html lang="en">
@@ -2585,45 +2604,66 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
       word-break: break-word;
     }
 
-    .session-selector {
+    .session-navigator {
+      margin-bottom: 12px;
+      border: 1px solid var(--vscode-panel-border);
+      border-radius: 6px;
+      overflow: hidden;
+    }
+
+    .session-nav-header {
       display: flex;
       align-items: center;
-      gap: 4px;
-      margin-bottom: 12px;
-      padding: 8px;
+      justify-content: space-between;
+      padding: 6px 8px;
       background: var(--vscode-input-background);
-      border: 1px solid var(--vscode-input-border);
-      border-radius: 4px;
-    }
-
-    .session-selector label {
-      font-size: 11px;
-      color: var(--vscode-descriptionForeground);
-      white-space: nowrap;
-    }
-
-    .session-selector select {
-      flex: 1;
-      min-width: 0;
-      padding: 4px 6px;
-      font-size: 11px;
-      font-family: var(--vscode-editor-font-family);
-      background: var(--vscode-dropdown-background);
-      color: var(--vscode-dropdown-foreground);
-      border: 1px solid var(--vscode-dropdown-border);
-      border-radius: 3px;
+      border-bottom: 1px solid var(--vscode-panel-border);
       cursor: pointer;
     }
 
-    .session-selector select:focus {
-      outline: 1px solid var(--vscode-focusBorder);
-      outline-offset: -1px;
+    .session-nav-header:hover {
+      opacity: 0.85;
     }
 
-    .session-selector .refresh-btn,
-    .session-selector .browse-btn {
-      padding: 4px 6px;
+    .session-nav-header-left {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .session-navigator .toggle-icon {
+      font-size: 10px;
+      transition: transform 0.2s;
+      opacity: 0.7;
+    }
+
+    .session-navigator.expanded .toggle-icon {
+      transform: rotate(90deg);
+    }
+
+    .session-navigator .session-list {
+      display: none;
+    }
+
+    .session-navigator.expanded .session-list {
+      display: block;
+    }
+
+    .session-nav-title {
       font-size: 11px;
+      font-weight: 600;
+      color: var(--vscode-foreground);
+    }
+
+    .session-nav-actions {
+      display: flex;
+      gap: 4px;
+    }
+
+    .session-nav-actions .nav-btn,
+    .session-nav-actions .pin-btn {
+      padding: 2px 6px;
+      font-size: 10px;
       background: var(--vscode-button-secondaryBackground);
       color: var(--vscode-button-secondaryForeground);
       border: none;
@@ -2631,18 +2671,101 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
       cursor: pointer;
     }
 
-    .session-selector .refresh-btn:hover,
-    .session-selector .browse-btn:hover {
+    .session-nav-actions .nav-btn:hover,
+    .session-nav-actions .pin-btn:hover {
       background: var(--vscode-button-secondaryHoverBackground);
     }
 
-    .session-selector .browse-btn {
+    .session-nav-actions .nav-btn.browse {
       background: var(--vscode-button-background);
       color: var(--vscode-button-foreground);
     }
 
-    .session-selector .browse-btn:hover {
+    .session-nav-actions .nav-btn.browse:hover {
       background: var(--vscode-button-hoverBackground);
+    }
+
+    .session-nav-actions .pin-btn.pinned {
+      background: var(--vscode-inputValidation-warningBackground);
+      color: var(--vscode-inputValidation-warningForeground, var(--vscode-foreground));
+    }
+
+    .session-list {
+      max-height: 200px;
+      overflow-y: auto;
+    }
+
+    .session-group-header {
+      padding: 4px 8px 2px;
+      font-size: 10px;
+      color: var(--vscode-descriptionForeground);
+      background: var(--vscode-sideBar-background);
+      border-top: 1px solid var(--vscode-panel-border);
+    }
+
+    .session-card {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 5px 8px;
+      cursor: pointer;
+      border-left: 2px solid transparent;
+    }
+
+    .session-card:hover {
+      background: var(--vscode-list-hoverBackground);
+    }
+
+    .session-card.current {
+      background: var(--vscode-list-activeSelectionBackground);
+      color: var(--vscode-list-activeSelectionForeground);
+      border-left-color: var(--vscode-focusBorder);
+    }
+
+    .session-card-status {
+      flex-shrink: 0;
+    }
+
+    .status-dot {
+      display: inline-block;
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--vscode-descriptionForeground);
+    }
+
+    .status-dot.active {
+      background: #3fb950;
+    }
+
+    .session-card-content {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .session-card-label {
+      font-size: 11px;
+      line-height: 1.3;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .session-card-meta {
+      font-size: 10px;
+      color: var(--vscode-descriptionForeground);
+    }
+
+    .session-card.current .session-card-meta {
+      color: var(--vscode-list-activeSelectionForeground);
+      opacity: 0.8;
+    }
+
+    .session-list-empty {
+      padding: 12px 8px;
+      text-align: center;
+      font-size: 11px;
+      color: var(--vscode-descriptionForeground);
     }
 
     .custom-path-indicator {
@@ -2937,13 +3060,21 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
     <span class="reset-link" id="reset-custom-path" title="Switch back to auto-detect mode">Reset</span>
   </div>
 
-  <div class="session-selector" title="Select a session to view its analytics">
-    <label for="session-select">Session:</label>
-    <select id="session-select">
-      <option value="">No sessions available</option>
-    </select>
-    <button class="refresh-btn" id="refresh-sessions" title="Refresh session list">↻</button>
-    <button class="browse-btn" id="browse-folders" title="Browse all Claude session folders">Browse...</button>
+  <div class="session-navigator expanded" id="session-navigator">
+    <div class="session-nav-header" data-collapsible="true">
+      <div class="session-nav-header-left">
+        <span class="toggle-icon">▶</span>
+        <span class="session-nav-title">Sessions</span>
+      </div>
+      <div class="session-nav-actions">
+        <button class="pin-btn" id="pin-session" title="Pin session to prevent auto-switching">Pin</button>
+        <button class="nav-btn" id="refresh-sessions" title="Refresh session list">↻</button>
+        <button class="nav-btn browse" id="browse-folders" title="Browse all Claude session folders">Browse...</button>
+      </div>
+    </div>
+    <div class="session-list" id="session-list">
+      <div class="session-list-empty">Loading sessions...</div>
+    </div>
   </div>
 
   <div class="tab-container">
@@ -3309,8 +3440,23 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
 
   <script nonce="${nonce}" src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <script nonce="${nonce}">
+    // Initial session data embedded at HTML generation time (no postMessage needed)
+    var __initialSessionData = ${this._safeJsonForScript({
+      groups: initialGroups,
+      isPinned: initialIsPinned,
+      isUsingCustomPath: initialIsUsingCustomPath,
+      customPathDisplay: initialCustomPath ? this._getShortPath(initialCustomPath) : null
+    })};
+  </script>
+  <script nonce="${nonce}">
     (function() {
       const vscode = acquireVsCodeApi();
+
+      // Catch uncaught errors
+      window.onerror = function(msg, url, line) {
+        var el = document.getElementById('session-list');
+        if (el) el.innerHTML = '<div class="session-list-empty">JS Error: ' + msg + ' (line ' + line + ')</div>';
+      };
 
       // DOM elements
       const statusEl = document.getElementById('status');
@@ -3323,7 +3469,8 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
       const contextPercentEl = document.getElementById('context-percent');
       const modelListEl = document.getElementById('model-list');
       const lastUpdatedEl = document.getElementById('last-updated');
-      const sessionSelectEl = document.getElementById('session-select');
+      const sessionListEl = document.getElementById('session-list');
+      const pinSessionBtn = document.getElementById('pin-session');
       const refreshSessionsBtn = document.getElementById('refresh-sessions');
       const browseFoldersBtn = document.getElementById('browse-folders');
       const customPathIndicator = document.getElementById('custom-path-indicator');
@@ -4199,10 +4346,10 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
       }
 
       /**
-       * Updates the session selector dropdown.
+       * Updates the session card navigator.
        */
-      function updateSessionList(sessions, isUsingCustomPath, customPathDisplay) {
-        if (!sessionSelectEl) return;
+      function updateSessionList(groups, isPinned, isUsingCustomPath, customPathDisplay) {
+        if (!sessionListEl) return;
 
         // Update custom path indicator
         if (customPathIndicator && customPathText) {
@@ -4214,39 +4361,74 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
           }
         }
 
-        // Clear current options
-        sessionSelectEl.innerHTML = '';
+        // Update pin button
+        if (pinSessionBtn) {
+          pinSessionBtn.textContent = isPinned ? 'Unpin' : 'Pin';
+          if (isPinned) {
+            pinSessionBtn.classList.add('pinned');
+            pinSessionBtn.title = 'Unpin session to allow auto-switching';
+          } else {
+            pinSessionBtn.classList.remove('pinned');
+            pinSessionBtn.title = 'Pin session to prevent auto-switching';
+          }
+        }
 
-        if (!sessions || sessions.length === 0) {
-          var opt = document.createElement('option');
-          opt.value = '';
-          opt.textContent = 'No sessions available';
-          sessionSelectEl.appendChild(opt);
+        // Clear current content
+        sessionListEl.innerHTML = '';
+
+        if (!groups || groups.length === 0) {
+          sessionListEl.innerHTML = '<div class="session-list-empty">No sessions available</div>';
           return;
         }
 
-        // Add sessions to dropdown
-        sessions.forEach(function(session, index) {
-          var opt = document.createElement('option');
-          opt.value = session.path;
-
-          // Format: "Latest" or relative time + short ID
-          var date = new Date(session.modifiedTime);
-          var timeStr = formatRelativeTime(date);
-          var shortId = session.filename.slice(0, 8);
-
-          if (index === 0) {
-            opt.textContent = 'Latest (' + shortId + ')';
-          } else {
-            opt.textContent = timeStr + ' (' + shortId + ')';
+        var totalSessions = 0;
+        groups.forEach(function(group) {
+          // Add group header for non-current groups
+          if (group.proximity !== 'current') {
+            var header = document.createElement('div');
+            header.className = 'session-group-header';
+            header.textContent = group.displayPath || group.projectPath;
+            sessionListEl.appendChild(header);
           }
 
-          if (session.isCurrent) {
-            opt.selected = true;
-          }
+          // Add session cards
+          group.sessions.forEach(function(session, index) {
+            var card = document.createElement('div');
+            card.className = 'session-card' + (session.isCurrent ? ' current' : '');
+            card.setAttribute('data-path', session.path);
 
-          sessionSelectEl.appendChild(opt);
+            var statusDiv = document.createElement('div');
+            statusDiv.className = 'session-card-status';
+            var dot = document.createElement('span');
+            dot.className = 'status-dot' + (session.isActive ? ' active' : '');
+            statusDiv.appendChild(dot);
+
+            var contentDiv = document.createElement('div');
+            contentDiv.className = 'session-card-content';
+
+            var labelDiv = document.createElement('div');
+            labelDiv.className = 'session-card-label';
+            labelDiv.textContent = session.label || session.filename.slice(0, 8) + '...';
+
+            var metaDiv = document.createElement('div');
+            metaDiv.className = 'session-card-meta';
+            var date = new Date(session.modifiedTime);
+            metaDiv.textContent = (index === 0 && group.proximity === 'current') ? 'Latest' : formatRelativeTime(date);
+
+            contentDiv.appendChild(labelDiv);
+            contentDiv.appendChild(metaDiv);
+
+            card.appendChild(statusDiv);
+            card.appendChild(contentDiv);
+
+            sessionListEl.appendChild(card);
+            totalSessions++;
+          });
         });
+
+        if (totalSessions === 0) {
+          sessionListEl.innerHTML = '<div class="session-list-empty">No sessions available</div>';
+        }
       }
 
       /**
@@ -4410,7 +4592,7 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
             break;
 
           case 'updateSessionList':
-            updateSessionList(message.sessions, message.isUsingCustomPath, message.customPathDisplay);
+            updateSessionList(message.groups, message.isPinned, message.isUsingCustomPath, message.customPathDisplay);
             break;
 
           case 'updateHistoricalData':
@@ -4498,24 +4680,40 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
         }
       });
 
-      // Session selector event handlers
-      if (sessionSelectEl) {
-        sessionSelectEl.addEventListener('change', function() {
-          var selectedPath = sessionSelectEl.value;
-          if (selectedPath) {
-            vscode.postMessage({ type: 'selectSession', sessionPath: selectedPath });
+      // Session navigator event handlers
+      if (sessionListEl) {
+        sessionListEl.addEventListener('click', function(e) {
+          var target = e.target;
+          while (target && target !== sessionListEl) {
+            if (target.classList && target.classList.contains('session-card')) {
+              var sessionPath = target.getAttribute('data-path');
+              if (sessionPath) {
+                vscode.postMessage({ type: 'selectSession', sessionPath: sessionPath });
+              }
+              return;
+            }
+            target = target.parentElement;
           }
         });
       }
 
+      if (pinSessionBtn) {
+        pinSessionBtn.addEventListener('click', function(e) {
+          e.stopPropagation();
+          vscode.postMessage({ type: 'togglePin' });
+        });
+      }
+
       if (refreshSessionsBtn) {
-        refreshSessionsBtn.addEventListener('click', function() {
+        refreshSessionsBtn.addEventListener('click', function(e) {
+          e.stopPropagation();
           vscode.postMessage({ type: 'refreshSessions' });
         });
       }
 
       if (browseFoldersBtn) {
-        browseFoldersBtn.addEventListener('click', function() {
+        browseFoldersBtn.addEventListener('click', function(e) {
+          e.stopPropagation();
           vscode.postMessage({ type: 'browseSessionFolders' });
         });
       }
@@ -4535,9 +4733,13 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
       }
 
       // Initialize charts and signal ready
-      initContextGauge();
-      initQuotaGauges();
-      initHistoryChart();
+      try {
+        initContextGauge();
+        initQuotaGauges();
+        initHistoryChart();
+      } catch (chartErr) {
+        // Chart init failure should not block session list
+      }
 
       // Set up event listeners for CLAUDE.md suggestions (CSP blocks inline onclick)
       var suggestionsPanel = document.getElementById('suggestions-panel');
@@ -4547,7 +4749,7 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
       if (suggestionsHeader && suggestionsPanel) {
         suggestionsHeader.addEventListener('click', function(e) {
           // Don't toggle if clicking the analyze button
-          if (e.target === analyzeBtn || analyzeBtn.contains(e.target)) {
+          if (analyzeBtn && (e.target === analyzeBtn || analyzeBtn.contains(e.target))) {
             return;
           }
           suggestionsPanel.classList.toggle('expanded');
@@ -4813,6 +5015,17 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
         });
         html += '</table>';
         body.innerHTML = html;
+      }
+
+      // Render initial session data embedded at HTML generation time
+      if (window.__initialSessionData) {
+        try {
+          var init = window.__initialSessionData;
+          updateSessionList(init.groups, init.isPinned, init.isUsingCustomPath, init.customPathDisplay);
+        } catch (e) {
+          var errEl = document.getElementById('session-list');
+          if (errEl) errEl.innerHTML = '<div class="session-list-empty">Init error: ' + e.message + '</div>';
+        }
       }
 
       vscode.postMessage({ type: 'webviewReady' });

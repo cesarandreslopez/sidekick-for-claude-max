@@ -17,7 +17,7 @@ import type {
 } from './sessionSummary';
 
 /**
- * Session info for the session selector dropdown.
+ * Session info for the session card navigator.
  */
 export interface SessionInfo {
   /** Full path to the session file */
@@ -28,6 +28,24 @@ export interface SessionInfo {
   modifiedTime: string;
   /** Whether this is the currently monitored session */
   isCurrent: boolean;
+  /** First user prompt text (truncated to 60 chars), or null if unavailable */
+  label: string | null;
+  /** Whether the session was modified within the last 2 minutes */
+  isActive: boolean;
+}
+
+/**
+ * Group of sessions from a single project directory.
+ */
+export interface SessionGroup {
+  /** Decoded human-readable project path (e.g., "/home/cal/code/myproject") */
+  projectPath: string;
+  /** Short display path with home dir replaced by ~ (e.g., "~/code/myproject") */
+  displayPath: string;
+  /** Proximity tier relative to the current workspace */
+  proximity: 'current' | 'related' | 'other';
+  /** Sessions in this project, sorted by modification time (most recent first) */
+  sessions: SessionInfo[];
 }
 
 /**
@@ -70,7 +88,7 @@ export type DashboardMessage =
   | { type: 'updateTimeline'; events: TimelineEventDisplay[] }
   | { type: 'sessionStart'; sessionPath: string }
   | { type: 'sessionEnd' }
-  | { type: 'updateSessionList'; sessions: SessionInfo[]; isUsingCustomPath?: boolean; customPathDisplay?: string | null }
+  | { type: 'updateSessionList'; groups: SessionGroup[]; isPinned: boolean; isUsingCustomPath?: boolean; customPathDisplay?: string | null }
   | { type: 'discoveryModeChange'; inDiscoveryMode: boolean }
   | { type: 'updateQuota'; quota: QuotaState }
   | { type: 'updateHistoricalData'; data: HistoricalSummary }
@@ -99,6 +117,7 @@ export type WebviewMessage =
   | { type: 'requestStats' }
   | { type: 'selectSession'; sessionPath: string }
   | { type: 'refreshSessions' }
+  | { type: 'togglePin' }
   | { type: 'browseSessionFolders' }
   | { type: 'clearCustomPath' }
   | { type: 'requestHistoricalData'; range: 'today' | 'week' | 'month' | 'all'; metric: string }

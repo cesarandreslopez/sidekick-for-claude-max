@@ -19,8 +19,10 @@
 
 import * as vscode from 'vscode';
 import * as fs from 'fs';
+import * as os from 'os';
 import path from 'path';
-import { findActiveSession, findAllSessions, getSessionDirectory, discoverSessionDirectory, findSessionsInDirectory } from './SessionPathResolver';
+import { findActiveSession, findAllSessions, getSessionDirectory, discoverSessionDirectory, findSessionsInDirectory, getAllProjectFolders, encodeWorkspacePath } from './SessionPathResolver';
+import type { SessionGroup, SessionInfo } from '../types/dashboard';
 import { JsonlParser, extractTokenUsage } from './JsonlParser';
 import { scanSubagentDir } from './SubagentFileScanner';
 import { ClaudeSessionEvent, TokenUsage, ToolCall, SessionStats, ToolAnalytics, TimelineEvent, PendingToolCall, SubagentStats, TaskState, TrackedTask, TaskStatus, PendingUserRequest, ResponseLatency, LatencyStats } from '../types/claudeSession';
@@ -570,6 +572,23 @@ export class SessionMonitor implements vscode.Disposable {
   }
 
   /**
+   * Returns whether the current session is pinned.
+   * When pinned, auto-switching to newer sessions is prevented.
+   */
+  isPinned(): boolean {
+    return this._isPinned;
+  }
+
+  /**
+   * Toggles the pin state for the current session.
+   * When pinned, auto-switching to newer sessions is prevented.
+   */
+  togglePin(): void {
+    this._isPinned = !this._isPinned;
+    log(`Session pin state: ${this._isPinned ? 'pinned' : 'unpinned'}`);
+  }
+
+  /**
    * Checks if actively monitoring a session.
    *
    * @returns True if monitoring is active
@@ -733,6 +752,8 @@ export class SessionMonitor implements vscode.Disposable {
     filename: string;
     modifiedTime: Date;
     isCurrent: boolean;
+    label: string | null;
+    isActive: boolean;
   }> {
     // Use custom directory if set, otherwise workspace path
     if (!this.customSessionDir && !this.workspacePath) {
@@ -748,13 +769,18 @@ export class SessionMonitor implements vscode.Disposable {
         sessions = findAllSessions(this.workspacePath!);
       }
 
+      const now = Date.now();
+      const ACTIVE_THRESHOLD_MS = 2 * 60 * 1000; // 2 minutes
+
       return sessions.map(sessionPath => {
         const stats = fs.statSync(sessionPath);
         return {
           path: sessionPath,
           filename: path.basename(sessionPath, '.jsonl'),
           modifiedTime: stats.mtime,
-          isCurrent: sessionPath === this.sessionPath
+          isCurrent: sessionPath === this.sessionPath,
+          label: SessionMonitor.extractSessionLabel(sessionPath),
+          isActive: (now - stats.mtime.getTime()) < ACTIVE_THRESHOLD_MS
         };
       });
     } catch (error) {
@@ -780,6 +806,9 @@ export class SessionMonitor implements vscode.Disposable {
     }
 
     log(`Manually switching to session: ${sessionPath}`);
+
+    // Manual switch unpins
+    this._isPinned = false;
 
     // Use the existing switchToNewSession method
     await this.switchToNewSession(sessionPath);
@@ -841,22 +870,173 @@ export class SessionMonitor implements vscode.Disposable {
     filename: string;
     modifiedTime: Date;
     isCurrent: boolean;
+    label: string | null;
+    isActive: boolean;
   }> {
     try {
       const sessions = findSessionsInDirectory(sessionDir);
+      const now = Date.now();
+      const ACTIVE_THRESHOLD_MS = 2 * 60 * 1000;
+
       return sessions.map(sessionPath => {
         const stats = fs.statSync(sessionPath);
         return {
           path: sessionPath,
           filename: path.basename(sessionPath, '.jsonl'),
           modifiedTime: stats.mtime,
-          isCurrent: sessionPath === this.sessionPath
+          isCurrent: sessionPath === this.sessionPath,
+          label: SessionMonitor.extractSessionLabel(sessionPath),
+          isActive: (now - stats.mtime.getTime()) < ACTIVE_THRESHOLD_MS
         };
       });
     } catch (error) {
       logError('Error getting sessions from directory', error);
       return [];
     }
+  }
+
+  /**
+   * Gets all sessions grouped by project, with proximity tiers.
+   *
+   * Uses getAllProjectFolders() from SessionPathResolver which already sorts
+   * by proximity: exact workspace match -> subdirectories -> recency.
+   *
+   * Limits to 5 sessions per project, max 3 projects beyond current.
+   *
+   * @returns Array of session groups with proximity tiers
+   */
+  getAllSessionsGrouped(): SessionGroup[] {
+    const groups: SessionGroup[] = [];
+    const now = Date.now();
+    const ACTIVE_THRESHOLD_MS = 2 * 60 * 1000;
+    const MAX_SESSIONS_PER_PROJECT = 5;
+    const MAX_OTHER_PROJECTS = 3;
+
+
+    try {
+      // Custom directory overrides workspace-based discovery (same pattern as
+      // performNewSessionCheck, performSessionDiscovery, getAvailableSessions)
+      if (this.customSessionDir) {
+        const sessions = findSessionsInDirectory(this.customSessionDir);
+        const limited = sessions.slice(0, MAX_SESSIONS_PER_PROJECT);
+        const sessionInfos = this.mapSessionPaths(limited, now, ACTIVE_THRESHOLD_MS);
+        if (sessionInfos.length > 0) {
+          groups.push({
+            projectPath: this.customSessionDir,
+            displayPath: SessionMonitor.shortenPathForDisplay(this.customSessionDir),
+            proximity: 'current',
+            sessions: sessionInfos
+          });
+        }
+        return groups;
+      }
+
+      const allFolders = getAllProjectFolders(this.workspacePath || undefined);
+
+      // Use encoded workspace path for reliable matching
+      // (decoded paths are lossy — hyphens in names become indistinguishable from separators)
+      const encodedWorkspace = this.workspacePath
+        ? encodeWorkspacePath(this.workspacePath).toLowerCase()
+        : '';
+
+      let otherProjectCount = 0;
+
+      for (const folder of allFolders) {
+        const encodedLower = folder.encodedName.toLowerCase();
+
+        // Determine proximity tier using encoded names (lossless comparison)
+        let proximity: 'current' | 'related' | 'other';
+        if (encodedWorkspace && (encodedLower === encodedWorkspace || encodedLower.startsWith(encodedWorkspace + '-'))) {
+          proximity = 'current';
+        } else if (encodedWorkspace && this.sharesEncodedPrefix(encodedLower, encodedWorkspace)) {
+          proximity = 'related';
+        } else {
+          proximity = 'other';
+        }
+
+        // Limit non-current projects
+        if (proximity !== 'current') {
+          if (otherProjectCount >= MAX_OTHER_PROJECTS) continue;
+          otherProjectCount++;
+        }
+
+        // Get sessions for this project
+        const sessions = findSessionsInDirectory(folder.path);
+        const limitedSessions = sessions.slice(0, MAX_SESSIONS_PER_PROJECT);
+
+        if (limitedSessions.length === 0) continue;
+
+        const sessionInfos = this.mapSessionPaths(limitedSessions, now, ACTIVE_THRESHOLD_MS);
+
+        if (sessionInfos.length === 0) continue;
+
+        groups.push({
+          projectPath: folder.decodedPath,
+          displayPath: SessionMonitor.shortenPathForDisplay(folder.decodedPath),
+          proximity,
+          sessions: sessionInfos
+        });
+      }
+    } catch (error) {
+      logError('Error getting grouped sessions', error);
+    }
+
+    return groups;
+  }
+
+  /**
+   * Shortens a path for display by replacing the home directory with ~.
+   * Works cross-platform (Linux, macOS, Windows).
+   */
+  private static shortenPathForDisplay(fullPath: string): string {
+    const home = os.homedir();
+    if (fullPath.startsWith(home)) {
+      return '~' + fullPath.substring(home.length);
+    }
+    return fullPath;
+  }
+
+  /**
+   * Maps raw session file paths to SessionInfo objects with metadata.
+   */
+  private mapSessionPaths(sessionPaths: string[], now: number, activeThresholdMs: number): SessionInfo[] {
+    return sessionPaths.map(sessionPath => {
+      try {
+        const fileStat = fs.statSync(sessionPath);
+        return {
+          path: sessionPath,
+          filename: path.basename(sessionPath, '.jsonl'),
+          modifiedTime: fileStat.mtime.toISOString(),
+          isCurrent: sessionPath === this.sessionPath,
+          label: SessionMonitor.extractSessionLabel(sessionPath),
+          isActive: (now - fileStat.mtime.getTime()) < activeThresholdMs
+        };
+      } catch {
+        return null;
+      }
+    }).filter((s): s is NonNullable<typeof s> => s !== null);
+  }
+
+  /**
+   * Checks if two encoded directory names share a common prefix.
+   * Uses encoded names to avoid lossy decoded path comparison.
+   *
+   * Splits on hyphens and checks for 3+ common leading segments.
+   * E.g., "-home-cal-code-foo" and "-home-cal-code-bar" share "-home-cal-code".
+   */
+  private sharesEncodedPrefix(encodedA: string, encodedB: string): boolean {
+    // Split encoded names — leading hyphen produces empty first element
+    const partsA = encodedA.split('-').filter(Boolean);
+    const partsB = encodedB.split('-').filter(Boolean);
+    let common = 0;
+    for (let i = 0; i < Math.min(partsA.length - 1, partsB.length - 1); i++) {
+      if (partsA[i] === partsB[i]) {
+        common++;
+      } else {
+        break;
+      }
+    }
+    return common >= 3;
   }
 
   /**
@@ -884,6 +1064,73 @@ export class SessionMonitor implements vscode.Disposable {
    */
   isUsingCustomPath(): boolean {
     return this.customSessionDir !== null;
+  }
+
+  /**
+   * Extracts the first user prompt text from a session file as a label.
+   *
+   * Reads the first 8KB of the JSONL file and finds the first user event
+   * with actual prompt content. Returns truncated text (max 60 chars).
+   *
+   * @param sessionPath - Path to the session JSONL file
+   * @returns First user prompt text (truncated), or null if not found
+   */
+  static extractSessionLabel(sessionPath: string): string | null {
+    try {
+      const fd = fs.openSync(sessionPath, 'r');
+      const buffer = Buffer.alloc(8192);
+      const bytesRead = fs.readSync(fd, buffer, 0, 8192, 0);
+      fs.closeSync(fd);
+
+      if (bytesRead === 0) return null;
+
+      const chunk = buffer.toString('utf-8', 0, bytesRead);
+      const lines = chunk.split('\n');
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+
+        try {
+          const event = JSON.parse(trimmed);
+          if (event.type !== 'user') continue;
+
+          const content = event.message?.content;
+          if (!content) continue;
+
+          let text: string | null = null;
+
+          if (typeof content === 'string') {
+            text = content.trim();
+          } else if (Array.isArray(content)) {
+            const textBlock = content.find((block: any) =>
+              block && typeof block === 'object' &&
+              block.type === 'text' &&
+              typeof block.text === 'string' &&
+              block.text.trim().length > 0
+            );
+            if (textBlock) {
+              text = textBlock.text.trim();
+            }
+          }
+
+          if (text && text.length > 0) {
+            // Collapse whitespace and truncate
+            text = text.replace(/\s+/g, ' ');
+            if (text.length > 60) {
+              text = text.substring(0, 57) + '...';
+            }
+            return text;
+          }
+        } catch {
+          // Skip malformed lines
+        }
+      }
+
+      return null;
+    } catch {
+      return null;
+    }
   }
 
   /**
@@ -939,6 +1186,7 @@ export class SessionMonitor implements vscode.Disposable {
     this.seenHashes.clear();
     this.isWaitingForSession = false;
     this.fastDiscoveryStartTime = null;
+    this._isPinned = false;
     this.resetTaskState();
     this.pendingUserRequest = null;
     this.latencyRecords = [];
@@ -1089,6 +1337,9 @@ export class SessionMonitor implements vscode.Disposable {
   /** Whether we're actively monitoring a session vs waiting for one */
   private isWaitingForSession = false;
 
+  /** Whether the current session is pinned (prevents auto-switching) */
+  private _isPinned = false;
+
   /**
    * Checks if a newer session file exists and switches to it.
    *
@@ -1111,6 +1362,12 @@ export class SessionMonitor implements vscode.Disposable {
   private performNewSessionCheck(): void {
     if (!this.customSessionDir && !this.workspacePath) {
       log('performNewSessionCheck: no path configured');
+      return;
+    }
+
+    // Don't auto-switch when pinned
+    if (this._isPinned) {
+      log('performNewSessionCheck: session is pinned, skipping');
       return;
     }
 

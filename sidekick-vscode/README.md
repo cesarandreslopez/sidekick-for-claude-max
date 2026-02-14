@@ -85,7 +85,10 @@ Monitor your Claude Code sessions in real-time with a comprehensive analytics da
 - Token usage tooltips and quota projections showing estimated usage at reset
 - Context window gauge showing input/output token usage vs. limits
 - Activity timeline displaying user prompts, tool calls, errors, and subagent spawns
+- Collapsible session navigator to save vertical space when not switching sessions
 - Session selector dropdown to switch between active and recent sessions
+
+![Session navigator](https://raw.githubusercontent.com/cesarandreslopez/sidekick-for-claude-max/main/assets/session_explorer.png)
 - **Browse Session Folders**: Manually select any Claude project folder to monitor, even from different directories
 - Tool analytics with categorization (file operations, search, bash commands, etc.)
 - **Session Summary** with AI narrative generation (progress notification + inline spinner)

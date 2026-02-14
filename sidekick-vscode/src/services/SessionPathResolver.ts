@@ -582,22 +582,23 @@ export function getAllProjectFolders(workspacePath?: string): ProjectFolderInfo[
     }
 
     // Sort with workspace prioritization
+    // Use encoded names for comparison (decoded paths are lossy — hyphens in
+    // directory names become indistinguishable from path separators)
     folders.sort((a, b) => {
       if (workspacePath) {
-        // Normalize for comparison (handle Windows paths)
-        const normalizedWorkspace = workspacePath.replace(/\\/g, '/').toLowerCase();
-        const aDecoded = a.decodedPath.toLowerCase();
-        const bDecoded = b.decodedPath.toLowerCase();
+        const encodedWorkspace = encodeWorkspacePath(workspacePath).toLowerCase();
+        const aEncoded = a.encodedName.toLowerCase();
+        const bEncoded = b.encodedName.toLowerCase();
 
         // Priority 1: Exact workspace match comes first
-        const aIsExact = aDecoded === normalizedWorkspace;
-        const bIsExact = bDecoded === normalizedWorkspace;
+        const aIsExact = aEncoded === encodedWorkspace;
+        const bIsExact = bEncoded === encodedWorkspace;
         if (aIsExact && !bIsExact) return -1;
         if (!aIsExact && bIsExact) return 1;
 
         // Priority 2: Subdirectories of workspace come next
-        const aIsSubdir = aDecoded.startsWith(normalizedWorkspace + '/');
-        const bIsSubdir = bDecoded.startsWith(normalizedWorkspace + '/');
+        const aIsSubdir = aEncoded.startsWith(encodedWorkspace + '-');
+        const bIsSubdir = bEncoded.startsWith(encodedWorkspace + '-');
         if (aIsSubdir && !bIsSubdir) return -1;
         if (!aIsSubdir && bIsSubdir) return 1;
       }
