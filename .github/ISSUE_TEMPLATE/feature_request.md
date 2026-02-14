@@ -22,9 +22,7 @@ A clear and concise description of any alternative solutions or features you've 
 
 Which part of the project does this affect?
 
-- [ ] VS Code Extension
-- [ ] Server
-- [ ] Both
+- [ ] Extension (VS Code / VSCodium / compatible editors)
 - [ ] Documentation
 
 ## Additional Context

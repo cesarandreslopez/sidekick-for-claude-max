@@ -35,7 +35,8 @@ If applicable, add screenshots to help explain your problem.
 
 ## Component
 
-VS Code Extension
+- [ ] Extension (VS Code / VSCodium / compatible editors)
+- [ ] Documentation
 
 ## Logs
 
