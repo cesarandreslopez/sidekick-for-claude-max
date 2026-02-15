@@ -154,4 +154,7 @@ export interface SessionProvider extends vscode.Disposable {
 
   /** Computes context window size from token usage. Provider-specific formula. */
   computeContextSize?(usage: TokenUsage): number;
+
+  /** Gets latest assistant usage snapshot for an active session, if available. */
+  getCurrentUsageSnapshot?(sessionPath: string): TokenUsage | null;
 }

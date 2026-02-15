@@ -967,11 +967,21 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
     const totalTokens = usage.inputTokens + usage.outputTokens + usage.cacheWriteTokens;
     this._burnRateCalculator.addEvent(totalTokens, usage.timestamp);
 
-    // Update current context size (provider-specific formula)
+    // Update current context size (provider-specific formula).
+    // OpenCode emits some assistant step rows with zero token signal; those
+    // should not zero out the gauge between real updates.
     const provider = this._sessionMonitor.getProvider();
-    this._currentContextSize = provider.computeContextSize
-      ? provider.computeContextSize(usage)
-      : usage.inputTokens + usage.cacheWriteTokens + usage.cacheReadTokens;
+    const hasContextSignal = usage.inputTokens > 0
+      || usage.outputTokens > 0
+      || usage.cacheWriteTokens > 0
+      || usage.cacheReadTokens > 0
+      || (usage.reasoningTokens ?? 0) > 0;
+
+    if (hasContextSignal) {
+      this._currentContextSize = provider.computeContextSize
+        ? provider.computeContextSize(usage)
+        : usage.inputTokens + usage.cacheWriteTokens + usage.cacheReadTokens;
+    }
 
     // Update context usage
     this._updateContextUsage();
@@ -1224,6 +1234,10 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
     this._state.totalCacheReadTokens = stats.totalCacheReadTokens;
     this._state.lastUpdated = stats.lastUpdated.toISOString();
     this._state.sessionActive = this._sessionMonitor.isActive();
+
+    if (stats.lastModelId) {
+      this._lastModelId = stats.lastModelId;
+    }
 
     // Sync context size from session BEFORE calculating usage percentage
     this._currentContextSize = stats.currentContextSize;
@@ -2305,6 +2319,10 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
 
     .gauge-row .context-item {
       flex: 0 0 35%;
+    }
+
+    .gauge-row.opencode-provider .context-item {
+      flex: 1;
     }
 
     .gauge-row .quota-item {
@@ -4012,6 +4030,7 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
 
       let currentProviderId = 'claude-code';
       let currentProviderName = 'Claude Code';
+      let currentQuota = null;
 
       // Suggestions state
       let currentSuggestions = [];
@@ -4609,11 +4628,27 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
        * Updates the quota display with new data.
        */
       function updateQuota(quota) {
+        currentQuota = quota;
+
         var sectionEl = document.getElementById('quota-section');
         var contentEl = document.getElementById('quota-content');
         var errorEl = document.getElementById('quota-error');
 
         if (!sectionEl || !contentEl || !errorEl) return;
+
+        if (currentProviderId === 'opencode') {
+          sectionEl.classList.remove('visible');
+          contentEl.style.display = 'none';
+          errorEl.style.display = 'none';
+          return;
+        }
+
+        if (!quota) {
+          sectionEl.classList.remove('visible');
+          contentEl.style.display = 'none';
+          errorEl.style.display = 'none';
+          return;
+        }
 
         if (!quota.available) {
           // Hide quota section or show error
@@ -4624,6 +4659,8 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
             errorEl.textContent = quota.error;
           } else {
             sectionEl.classList.remove('visible');
+            contentEl.style.display = 'none';
+            errorEl.style.display = 'none';
           }
           return;
         }
@@ -5022,6 +5059,25 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
         }
         if (emptyStateHint) {
           emptyStateHint.textContent = 'Start a ' + providerName + ' session to see analytics.';
+        }
+
+        var quotaSectionEl = document.getElementById('quota-section');
+        var quotaContentEl = document.getElementById('quota-content');
+        var quotaErrorEl = document.getElementById('quota-error');
+
+        if (gaugeRow) {
+          gaugeRow.classList.toggle('opencode-provider', currentProviderId === 'opencode');
+        }
+
+        if (currentProviderId === 'opencode') {
+          if (quotaSectionEl) quotaSectionEl.classList.remove('visible');
+          if (quotaContentEl) quotaContentEl.style.display = 'none';
+          if (quotaErrorEl) quotaErrorEl.style.display = 'none';
+          return;
+        }
+
+        if (currentQuota) {
+          updateQuota(currentQuota);
         }
       }
 

@@ -90,9 +90,7 @@ export class MonitorStatusBar implements vscode.Disposable {
    * Resets state.
    */
   private handleSessionStart(): void {
-    this.totalTokens = 0;
-    this.contextPercent = 0;
-
+    this.syncFromMonitor();
     this.updateDisplay();
   }
 
@@ -114,6 +112,8 @@ export class MonitorStatusBar implements vscode.Disposable {
    * @param usage - Token usage event
    */
   private handleTokenUsage(usage: TokenUsage): void {
+    this.syncFromMonitor(usage);
+
     // Throttle updates
     const now = Date.now();
     if (now - this.lastUpdateTime < this.UPDATE_THROTTLE_MS) {
@@ -121,16 +121,28 @@ export class MonitorStatusBar implements vscode.Disposable {
     }
     this.lastUpdateTime = now;
 
-    // Update totals
-    this.totalTokens += usage.inputTokens + usage.outputTokens + usage.cacheWriteTokens + usage.cacheReadTokens;
+    this.updateDisplay();
+  }
 
-    // Calculate context % using actual context size from most recent message
+  /**
+   * Syncs display metrics from SessionMonitor stats.
+   *
+   * @param usageHint - Optional latest usage event to help with model fallback
+   */
+  private syncFromMonitor(usageHint?: TokenUsage): void {
     const stats = this.monitor.getStats();
     const provider = this.monitor.getProvider();
-    const contextLimit = provider.getContextWindowLimit?.(undefined) ?? 200_000;
-    this.contextPercent = Math.round((stats.currentContextSize / contextLimit) * 100);
 
-    this.updateDisplay();
+    this.totalTokens = stats.totalInputTokens
+      + stats.totalOutputTokens
+      + stats.totalCacheWriteTokens
+      + stats.totalCacheReadTokens;
+
+    const modelId = stats.lastModelId ?? usageHint?.model;
+    const contextLimit = provider.getContextWindowLimit?.(modelId) ?? 200_000;
+    this.contextPercent = contextLimit > 0
+      ? Math.round((stats.currentContextSize / contextLimit) * 100)
+      : 0;
   }
 
   /**
@@ -158,7 +170,7 @@ export class MonitorStatusBar implements vscode.Disposable {
     // Build detailed tooltip
     const stats = this.monitor.getStats();
     const provider = this.monitor.getProvider();
-    const contextLimit = provider.getContextWindowLimit?.(undefined) ?? 200_000;
+    const contextLimit = provider.getContextWindowLimit?.(stats.lastModelId) ?? 200_000;
     this.statusBarItem.tooltip = [
       `${provider.displayName} Session`,
       `Tokens: ${this.totalTokens.toLocaleString()} (${stats.totalInputTokens.toLocaleString()} in + ${stats.totalOutputTokens.toLocaleString()} out)`,

@@ -67,6 +67,31 @@ function extractProjectIdFromDbPath(sessionPath: string): string | null {
   return slashIdx > 0 ? rest.substring(0, slashIdx) : null;
 }
 
+/** Extract role from a DB message row payload. */
+function extractRoleFromDbMessage(row: { data: string }): 'user' | 'assistant' | 'system' | 'unknown' {
+  try {
+    const data = JSON.parse(row.data) as { role?: unknown };
+    if (data.role === 'user' || data.role === 'assistant' || data.role === 'system') {
+      return data.role;
+    }
+  } catch {
+    // Ignore malformed payloads
+  }
+  return 'unknown';
+}
+
+/** Extract parent message ID from a DB message row payload. */
+function extractParentIdFromDbMessage(row: { data: string }): string | null {
+  try {
+    const data = JSON.parse(row.data) as { parentID?: unknown };
+    return typeof data.parentID === 'string' && data.parentID.length > 0
+      ? data.parentID
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Resolves the OpenCode project ID for a workspace path.
  *
@@ -303,57 +328,67 @@ class OpenCodeDbReader implements SessionReader {
   readNew(): ClaudeSessionEvent[] {
     const events: ClaudeSessionEvent[] = [];
 
-    // Get messages and parts that are newer than what we've seen
-    const messages = this.hasReadOnce
-      ? this.db.getMessagesNewerThan(this.sessionId, this.lastTimeUpdated)
-      : this.db.getMessagesForSession(this.sessionId);
-
-    const parts = this.hasReadOnce
-      ? this.db.getPartsNewerThan(this.sessionId, this.lastTimeUpdated)
-      : this.db.getPartsForSession(this.sessionId);
-
-    if (messages.length === 0 && parts.length === 0) {
+    // Avoid expensive full-history scans on first attach.
+    // We start from the latest known cursor and stream only new updates.
+    if (!this.hasReadOnce) {
+      const latestMessageTime = this.db.getLatestMessageTimeUpdated(this.sessionId);
+      const latestPartTime = this.db.getLatestPartTimeUpdated(this.sessionId);
+      this.lastTimeUpdated = Math.max(this.lastTimeUpdated, latestMessageTime, latestPartTime);
       this.hasReadOnce = true;
       return [];
     }
 
-    // Group parts by message ID
-    const partsByMessage = new Map<string, typeof parts>();
+    // Get messages and parts that are newer than what we've seen
+    const messages = this.db.getMessagesNewerThan(this.sessionId, this.lastTimeUpdated);
+    const parts = this.db.getPartsNewerThan(this.sessionId, this.lastTimeUpdated);
+
+    if (messages.length === 0 && parts.length === 0) {
+      return [];
+    }
+
+    // Build set of affected message IDs from both message and part changes
+    const affectedMessageIds = new Set<string>(messages.map(m => m.id));
     for (const part of parts) {
+      affectedMessageIds.add(part.message_id);
+    }
+
+    // If an assistant reply arrives, include its parent user message so
+    // queued user prompts are surfaced only once they are actually processed.
+    for (const msg of messages) {
+      const parentId = extractParentIdFromDbMessage(msg);
+      if (parentId) {
+        affectedMessageIds.add(parentId);
+      }
+    }
+
+    // Fetch missing message rows for part-only updates
+    const messageMap = new Map(messages.map(m => [m.id, m]));
+    const missingMessageIds = [...affectedMessageIds].filter(id => !messageMap.has(id));
+    if (missingMessageIds.length > 0) {
+      const missingRows = this.db.getMessagesByIds(this.sessionId, missingMessageIds);
+      for (const row of missingRows) {
+        messageMap.set(row.id, row);
+      }
+
+      const unresolved = missingMessageIds.filter(id => !messageMap.has(id));
+      if (unresolved.length > 0) {
+        // Keep cursor unchanged so we can retry on next polling cycle.
+        return [];
+      }
+    }
+
+    const targetMessages = [...messageMap.values()];
+    const targetMessageIds = targetMessages.map(m => m.id);
+
+    // Fetch complete part sets for all affected messages in one batched query
+    const allParts = this.db.getPartsForMessages(this.sessionId, targetMessageIds);
+    const partsByMessage = new Map<string, typeof allParts>();
+    for (const part of allParts) {
       const existing = partsByMessage.get(part.message_id);
       if (existing) {
         existing.push(part);
       } else {
         partsByMessage.set(part.message_id, [part]);
-      }
-    }
-
-    // For incremental reads, we may have parts for messages that weren't returned
-    // (the message itself didn't change but a part was updated). Fetch those messages.
-    const messageIds = new Set(messages.map(m => m.id));
-    for (const msgId of partsByMessage.keys()) {
-      if (!messageIds.has(msgId)) {
-        // Need to fetch the full message and all its parts for correct conversion
-        const allMsgRows = this.db.getMessagesForSession(this.sessionId);
-        const fullMsg = allMsgRows.find(m => m.id === msgId);
-        if (fullMsg) {
-          messages.push(fullMsg);
-          messageIds.add(msgId);
-          // Get all parts for this message (not just updated ones)
-          const allParts = this.db.getPartsForMessage(msgId);
-          partsByMessage.set(msgId, allParts);
-        }
-      }
-    }
-
-    // For messages that are new/updated but have no updated parts in this batch,
-    // we still need all their parts for correct event conversion
-    for (const msg of messages) {
-      if (!partsByMessage.has(msg.id)) {
-        const msgParts = this.db.getPartsForMessage(msg.id);
-        if (msgParts.length > 0) {
-          partsByMessage.set(msg.id, msgParts);
-        }
       }
     }
 
@@ -368,10 +403,21 @@ class OpenCodeDbReader implements SessionReader {
 
     // Convert each message + its parts to events
     // Sort messages by creation time
-    messages.sort((a, b) => a.time_created - b.time_created);
+    targetMessages.sort((a, b) => a.time_created - b.time_created);
 
-    for (const msgRow of messages) {
+    const userMessageIds = targetMessages
+      .filter(m => extractRoleFromDbMessage(m) === 'user')
+      .map(m => m.id);
+    const processedUserMessageIds = new Set(
+      this.db.getProcessedUserMessageIds(this.sessionId, userMessageIds)
+    );
+
+    for (const msgRow of targetMessages) {
       try {
+        if (extractRoleFromDbMessage(msgRow) === 'user' && !processedUserMessageIds.has(msgRow.id)) {
+          continue;
+        }
+
         const message = parseDbMessageData(msgRow);
         const msgParts = (partsByMessage.get(msgRow.id) || []).map(row => {
           try { return parseDbPartData(row); }
@@ -385,7 +431,6 @@ class OpenCodeDbReader implements SessionReader {
     }
 
     this.lastTimeUpdated = maxTimeUpdated;
-    this.hasReadOnce = true;
 
     return events;
   }
@@ -401,7 +446,10 @@ class OpenCodeDbReader implements SessionReader {
   }
 
   exists(): boolean {
-    return this.db.getSession(this.sessionId) !== null;
+    // DB-backed sessions are durable rows rather than ephemeral files.
+    // Treat transient sqlite timeout/read failures as "still exists" so
+    // SessionMonitor does not flap into discovery mode.
+    return true;
   }
 
   flush(): void {
@@ -1054,6 +1102,25 @@ export class OpenCodeSessionProvider implements SessionProvider {
     return null;
   }
 
+  getCurrentUsageSnapshot(sessionPath: string): TokenUsage | null {
+    const db = this.ensureDb();
+    if (!db) return null;
+
+    const sessionId = this.getSessionId(sessionPath);
+    const snapshot = db.getLatestAssistantContextUsage(sessionId);
+    if (!snapshot) return null;
+
+    return {
+      inputTokens: Number(snapshot.inputTokens) || 0,
+      outputTokens: Number(snapshot.outputTokens) || 0,
+      cacheWriteTokens: Number(snapshot.cacheWriteTokens) || 0,
+      cacheReadTokens: Number(snapshot.cacheReadTokens) || 0,
+      reasoningTokens: Number(snapshot.reasoningTokens) || 0,
+      model: snapshot.modelId || 'unknown',
+      timestamp: new Date(Number(snapshot.timeCreated) || Date.now()),
+    };
+  }
+
   computeContextSize(usage: TokenUsage): number {
     return usage.inputTokens + usage.outputTokens + (usage.reasoningTokens ?? 0)
          + usage.cacheWriteTokens + usage.cacheReadTokens;
@@ -1065,8 +1132,10 @@ export class OpenCodeSessionProvider implements SessionProvider {
 
     // GPT-4.1 series: 1M context
     if (id.startsWith('gpt-4.1')) return 1_000_000;
-    // GPT-5, o1, o3, o4 series: 200K context
-    if (id.startsWith('gpt-5') || id.startsWith('o1') || id.startsWith('o3') || id.startsWith('o4')) return 200_000;
+    // GPT-5 series: 400K context
+    if (id.startsWith('gpt-5')) return 400_000;
+    // o1, o3, o4 series: 200K context
+    if (id.startsWith('o1') || id.startsWith('o3') || id.startsWith('o4')) return 200_000;
     // GPT-4o / GPT-4 series: 128K context
     if (id.startsWith('gpt-4')) return 128_000;
     // Claude models: 200K context

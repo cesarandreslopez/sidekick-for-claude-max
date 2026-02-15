@@ -118,6 +118,9 @@ export class SessionMonitor implements vscode.Disposable {
   /** Current context window size (from most recent assistant message) */
   private currentContextSize: number = 0;
 
+  /** Most recently observed model ID */
+  private lastModelId: string | null = null;
+
   /** Accumulated cost reported by the provider (e.g., OpenCode per-message cost) */
   private totalReportedCost: number = 0;
 
@@ -264,6 +267,7 @@ export class SessionMonitor implements vscode.Disposable {
       timeline: [],
       errorDetails: new Map(),
       currentContextSize: 0,
+      lastModelId: undefined,
       recentUsageEvents: [],
       sessionStartTime: null
     };
@@ -324,6 +328,19 @@ export class SessionMonitor implements vscode.Disposable {
     try {
       this.isWaitingForSession = false;
       this.sessionId = this.provider.getSessionId(this.sessionPath);
+      this.reader = this.provider.createReader(this.sessionPath);
+
+      const usageSnapshot = this.provider.getCurrentUsageSnapshot?.(this.sessionPath);
+      if (usageSnapshot) {
+        const snapshotContextSize = this.provider.computeContextSize
+          ? this.provider.computeContextSize(usageSnapshot)
+          : usageSnapshot.inputTokens + usageSnapshot.cacheWriteTokens + usageSnapshot.cacheReadTokens;
+        this.currentContextSize = snapshotContextSize;
+        this.previousContextSize = snapshotContextSize;
+        this.stats.currentContextSize = snapshotContextSize;
+        this.lastModelId = usageSnapshot.model;
+        this.stats.lastModelId = usageSnapshot.model;
+      }
 
       // Read existing content
       await this.readInitialContent();
@@ -396,6 +413,7 @@ export class SessionMonitor implements vscode.Disposable {
     this.timeline = [];
     this.errorDetails.clear();
     this.currentContextSize = 0;
+    this.lastModelId = null;
     this.totalReportedCost = 0;
     this.recentUsageEvents = [];
     this.sessionStartTime = null;
@@ -715,6 +733,7 @@ export class SessionMonitor implements vscode.Disposable {
     this.timeline = [];
     this.errorDetails.clear();
     this.currentContextSize = 0;
+    this.lastModelId = null;
     this.totalReportedCost = 0;
     this.recentUsageEvents = [];
     this.sessionStartTime = null;
@@ -741,9 +760,22 @@ export class SessionMonitor implements vscode.Disposable {
       timeline: [],
       errorDetails: new Map(),
       currentContextSize: 0,
+      lastModelId: undefined,
       recentUsageEvents: [],
       sessionStartTime: null
     };
+
+    const usageSnapshot = this.provider.getCurrentUsageSnapshot?.(sessionPath);
+    if (usageSnapshot) {
+      const snapshotContextSize = this.provider.computeContextSize
+        ? this.provider.computeContextSize(usageSnapshot)
+        : usageSnapshot.inputTokens + usageSnapshot.cacheWriteTokens + usageSnapshot.cacheReadTokens;
+      this.currentContextSize = snapshotContextSize;
+      this.previousContextSize = snapshotContextSize;
+      this.stats.currentContextSize = snapshotContextSize;
+      this.lastModelId = usageSnapshot.model;
+      this.stats.lastModelId = usageSnapshot.model;
+    }
 
     // Re-setup watcher to track the new session file
     await this.setupDirectoryWatcher();
@@ -855,6 +887,7 @@ export class SessionMonitor implements vscode.Disposable {
       timeline: [...this.timeline],
       errorDetails: new Map(this.errorDetails),
       currentContextSize: this.currentContextSize,
+      lastModelId: this.lastModelId ?? undefined,
       recentUsageEvents: [...this.recentUsageEvents],
       sessionStartTime: this.sessionStartTime,
       taskState: this.taskState.tasks.size > 0 ? {
@@ -1751,6 +1784,8 @@ export class SessionMonitor implements vscode.Disposable {
       }
 
       log(`Token usage extracted - input: ${usage.inputTokens}, output: ${usage.outputTokens}, cacheWrite: ${usage.cacheWriteTokens}, cacheRead: ${usage.cacheReadTokens}`);
+      this.lastModelId = usage.model;
+      this.stats.lastModelId = usage.model;
       // Update statistics
       this.stats.totalInputTokens += usage.inputTokens;
       this.stats.totalOutputTokens += usage.outputTokens;
@@ -1772,38 +1807,46 @@ export class SessionMonitor implements vscode.Disposable {
         ? this.provider.computeContextSize(usage)
         : usage.inputTokens + usage.cacheWriteTokens + usage.cacheReadTokens;
 
-      // Detect compaction: significant context size drop (>20% decrease)
-      if (this.previousContextSize > 0 && newContextSize < this.previousContextSize * 0.8) {
-        const compactionEvent: CompactionEvent = {
-          timestamp: new Date(event.timestamp),
-          contextBefore: this.previousContextSize,
-          contextAfter: newContextSize,
-          tokensReclaimed: this.previousContextSize - newContextSize
-        };
-        this.compactionEvents.push(compactionEvent);
-        this._onCompaction.fire(compactionEvent);
-        log(`Compaction detected: ${this.previousContextSize} -> ${newContextSize} (reclaimed ${compactionEvent.tokensReclaimed} tokens)`);
+      const hasContextSignal = usage.inputTokens > 0
+        || usage.outputTokens > 0
+        || usage.cacheWriteTokens > 0
+        || usage.cacheReadTokens > 0
+        || (usage.reasoningTokens ?? 0) > 0;
 
-        // Add compaction marker to timeline
-        this.timeline.unshift({
-          type: 'compaction',
-          timestamp: event.timestamp,
-          description: `Context compacted: ${Math.round(this.previousContextSize / 1000)}K -> ${Math.round(newContextSize / 1000)}K tokens (reclaimed ${Math.round(compactionEvent.tokensReclaimed / 1000)}K)`,
-          noiseLevel: 'system',
-          metadata: {
+      if (hasContextSignal) {
+        // Detect compaction: significant context size drop (>20% decrease)
+        if (this.previousContextSize > 0 && newContextSize < this.previousContextSize * 0.8) {
+          const compactionEvent: CompactionEvent = {
+            timestamp: new Date(event.timestamp),
             contextBefore: this.previousContextSize,
             contextAfter: newContextSize,
-            tokensReclaimed: compactionEvent.tokensReclaimed
-          }
-        });
-        if (this.timeline.length > this.MAX_TIMELINE_EVENTS) {
-          this.timeline = this.timeline.slice(0, this.MAX_TIMELINE_EVENTS);
-        }
-        this._onTimelineEvent.fire(this.timeline[0]);
-      }
+            tokensReclaimed: this.previousContextSize - newContextSize
+          };
+          this.compactionEvents.push(compactionEvent);
+          this._onCompaction.fire(compactionEvent);
+          log(`Compaction detected: ${this.previousContextSize} -> ${newContextSize} (reclaimed ${compactionEvent.tokensReclaimed} tokens)`);
 
-      this.previousContextSize = newContextSize;
-      this.currentContextSize = newContextSize;
+          // Add compaction marker to timeline
+          this.timeline.unshift({
+            type: 'compaction',
+            timestamp: event.timestamp,
+            description: `Context compacted: ${Math.round(this.previousContextSize / 1000)}K -> ${Math.round(newContextSize / 1000)}K tokens (reclaimed ${Math.round(compactionEvent.tokensReclaimed / 1000)}K)`,
+            noiseLevel: 'system',
+            metadata: {
+              contextBefore: this.previousContextSize,
+              contextAfter: newContextSize,
+              tokensReclaimed: compactionEvent.tokensReclaimed
+            }
+          });
+          if (this.timeline.length > this.MAX_TIMELINE_EVENTS) {
+            this.timeline = this.timeline.slice(0, this.MAX_TIMELINE_EVENTS);
+          }
+          this._onTimelineEvent.fire(this.timeline[0]);
+        }
+
+        this.previousContextSize = newContextSize;
+        this.currentContextSize = newContextSize;
+      }
 
       // Track for burn rate calculation (include cache writes as they count toward quota)
       const totalTokensForBurn = usage.inputTokens + usage.outputTokens + usage.cacheWriteTokens;

@@ -435,6 +435,9 @@ export interface SessionStats {
   /** Current context window size (from most recent assistant message) */
   currentContextSize: number;
 
+  /** Most recently observed model ID for context window estimation */
+  lastModelId?: string;
+
   /** Recent token usage events for burn rate calculation (timestamp, tokens) */
   recentUsageEvents: Array<{ timestamp: Date; tokens: number }>;
 
