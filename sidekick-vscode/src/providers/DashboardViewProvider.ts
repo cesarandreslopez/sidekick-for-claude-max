@@ -1435,9 +1435,18 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
    * Public method to refresh session-related panels and provider info.
    */
   refreshSessionView(): void {
+    // Reset timeline and tool analytics for the new provider/session
+    this._timeline = [];
+    this._toolAnalytics.clear();
+    this._state.timeline = [];
+    this._state.toolAnalytics = [];
+    this._state.errorDetails = [];
+
     this._syncFromSessionMonitor();
     this._sendStateToWebview();
     this._sendBurnRateUpdate();
+    this._sendTimelineToWebview();
+    this._sendToolAnalyticsToWebview();
     this._sendSessionList();
     this._sendProviderInfo();
   }
@@ -5069,12 +5078,19 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
           gaugeRow.classList.toggle('opencode-provider', currentProviderId === 'opencode');
         }
 
+        // For OpenCode: repurpose the Quota button as "Context" (no subscription quota)
+        // For Claude Code: restore the Quota button label and show subscription quota
+        var quotaBtn = document.querySelector('.metric-btn[data-metric="quota"]');
         if (currentProviderId === 'opencode') {
           if (quotaSectionEl) quotaSectionEl.classList.remove('visible');
           if (quotaContentEl) quotaContentEl.style.display = 'none';
           if (quotaErrorEl) quotaErrorEl.style.display = 'none';
+          if (quotaBtn) quotaBtn.textContent = 'Context';
           return;
         }
+
+        // Restore for non-OpenCode providers
+        if (quotaBtn) quotaBtn.textContent = 'Quota';
 
         if (currentQuota) {
           updateQuota(currentQuota);

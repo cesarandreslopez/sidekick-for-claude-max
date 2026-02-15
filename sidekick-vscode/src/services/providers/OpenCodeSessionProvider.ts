@@ -22,7 +22,7 @@ import { log } from '../Logger';
 import { convertOpenCodeMessage, parseDbMessageData, parseDbPartData } from './OpenCodeMessageParser';
 import { OpenCodeDatabase } from './OpenCodeDatabase';
 import type { SessionProvider, SessionReader, ProjectFolderInfo, SearchHit } from '../../types/sessionProvider';
-import type { ClaudeSessionEvent, SubagentStats, TokenUsage } from '../../types/claudeSession';
+import type { ClaudeSessionEvent, ContextAttribution, SubagentStats, TokenUsage } from '../../types/claudeSession';
 import type { OpenCodeSession, OpenCodeMessage, OpenCodePart, OpenCodeProject } from '../../types/opencode';
 
 /**
@@ -930,8 +930,37 @@ export class OpenCodeSessionProvider implements SessionProvider {
     return new OpenCodeFileReader(sessionId);
   }
 
-  scanSubagents(_sessionDir: string, _sessionId: string): SubagentStats[] {
-    return [];
+  scanSubagents(_sessionDir: string, sessionId: string): SubagentStats[] {
+    const db = this.ensureDb();
+    if (!db) return [];
+
+    try {
+      const parts = db.getPartsForSession(sessionId);
+      const results: SubagentStats[] = [];
+
+      for (const partRow of parts) {
+        try {
+          const data = JSON.parse(partRow.data) as Record<string, unknown>;
+          if (data.type !== 'subtask') continue;
+
+          results.push({
+            agentId: partRow.id,
+            agentType: (data.agent as string) || undefined,
+            description: (data.description as string) || undefined,
+            toolCalls: [],
+            inputTokens: 0,
+            outputTokens: 0,
+            startTime: new Date(partRow.time_created),
+          });
+        } catch {
+          // Skip malformed part data
+        }
+      }
+
+      return results;
+    } catch {
+      return [];
+    }
   }
 
   searchInSession(sessionPath: string, query: string, maxResults: number): SearchHit[] {
@@ -1122,8 +1151,111 @@ export class OpenCodeSessionProvider implements SessionProvider {
   }
 
   computeContextSize(usage: TokenUsage): number {
-    return usage.inputTokens + usage.outputTokens + (usage.reasoningTokens ?? 0)
-         + usage.cacheWriteTokens + usage.cacheReadTokens;
+    // Context = input tokens + cache tokens. Output and reasoning tokens
+    // are the model's response, not part of the context window.
+    return usage.inputTokens + usage.cacheWriteTokens + usage.cacheReadTokens;
+  }
+
+  getContextAttribution(sessionPath: string): ContextAttribution | null {
+    const db = this.ensureDb();
+    if (!db) return null;
+
+    const sessionId = this.getSessionId(sessionPath);
+
+    try {
+      const messages = db.getMessagesForSession(sessionId);
+      if (messages.length === 0) return null;
+
+      const attribution: ContextAttribution = {
+        systemPrompt: 0,
+        userMessages: 0,
+        assistantResponses: 0,
+        toolInputs: 0,
+        toolOutputs: 0,
+        thinking: 0,
+        other: 0,
+      };
+
+      // Accumulate input tokens by role. OpenCode messages store actual
+      // token counts from the provider, so this is more accurate than
+      // heuristic content estimation.
+      for (const row of messages) {
+        try {
+          const data = JSON.parse(row.data) as Record<string, unknown>;
+          const role = data.role as string;
+          const tokens = data.tokens as Record<string, unknown> | undefined;
+          const cache = tokens?.cache as Record<string, unknown> | undefined;
+
+          // Context contribution = input + cacheWrite + cacheRead
+          const input = (tokens?.input as number) || 0;
+          const cacheRead = (cache?.read as number) || 0;
+          const cacheWrite = (cache?.write as number) || 0;
+          const reasoning = (tokens?.reasoning as number) || 0;
+          const contextTokens = input + cacheRead + cacheWrite;
+
+          if (contextTokens === 0) continue;
+
+          if (role === 'user') {
+            // User messages include prompts and tool results;
+            // we can't distinguish without parsing parts, so attribute
+            // to userMessages (tool outputs arrive as separate assistant
+            // messages in OpenCode's model)
+            attribution.userMessages += contextTokens;
+          } else if (role === 'assistant') {
+            // Attribute reasoning separately when available
+            if (reasoning > 0) {
+              attribution.thinking += reasoning;
+              attribution.assistantResponses += contextTokens - reasoning;
+            } else {
+              attribution.assistantResponses += contextTokens;
+            }
+          } else if (role === 'system') {
+            attribution.systemPrompt += contextTokens;
+          } else {
+            attribution.other += contextTokens;
+          }
+        } catch {
+          // Skip malformed message data
+        }
+      }
+
+      // Refine user attribution: scan parts to separate tool outputs
+      // from user prompts for more accurate breakdown
+      const parts = db.getPartsForSession(sessionId);
+      let toolPartCount = 0;
+      let userTextPartCount = 0;
+      for (const partRow of parts) {
+        try {
+          const partData = JSON.parse(partRow.data) as Record<string, unknown>;
+          const partType = partData.type as string;
+          if (partType === 'tool' || partType === 'tool-invocation') {
+            toolPartCount++;
+          } else if (partType === 'text') {
+            userTextPartCount++;
+          }
+        } catch {
+          // Skip
+        }
+      }
+
+      // If there are tool parts, redistribute user token attribution
+      // between userMessages and toolOutputs proportionally
+      const totalParts = toolPartCount + userTextPartCount;
+      if (totalParts > 0 && toolPartCount > 0 && attribution.userMessages > 0) {
+        const toolProportion = toolPartCount / totalParts;
+        const toolTokens = Math.round(attribution.userMessages * toolProportion);
+        attribution.toolOutputs += toolTokens;
+        attribution.userMessages -= toolTokens;
+      }
+
+      const total = attribution.systemPrompt + attribution.userMessages +
+        attribution.assistantResponses + attribution.toolInputs +
+        attribution.toolOutputs + attribution.thinking + attribution.other;
+
+      return total > 0 ? attribution : null;
+    } catch {
+      return null;
+    }
   }
 
   getContextWindowLimit(modelId?: string): number {

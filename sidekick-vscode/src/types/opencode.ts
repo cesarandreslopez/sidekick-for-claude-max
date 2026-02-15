@@ -170,6 +170,55 @@ export interface OpenCodePatchPart extends OpenCodePartBase {
 }
 
 /**
+ * Subtask part — delegated work to a subagent.
+ */
+export interface OpenCodeSubtaskPart extends OpenCodePartBase {
+  type: 'subtask';
+  prompt?: string;
+  description?: string;
+  agent?: string;
+  model?: string;
+  command?: string;
+}
+
+/**
+ * Agent part — metadata about an agent invocation.
+ */
+export interface OpenCodeAgentPart extends OpenCodePartBase {
+  type: 'agent';
+  name?: string;
+  source?: string;
+}
+
+/**
+ * File part — file attachment or reference.
+ */
+export interface OpenCodeFilePart extends OpenCodePartBase {
+  type: 'file';
+  mime?: string;
+  filename?: string;
+  url?: string;
+}
+
+/**
+ * Retry part — automatic retry after an error.
+ */
+export interface OpenCodeRetryPart extends OpenCodePartBase {
+  type: 'retry';
+  attempt?: number;
+  error?: { message?: string; code?: string };
+  time?: string | number;
+}
+
+/**
+ * Snapshot part — conversation state snapshot.
+ */
+export interface OpenCodeSnapshotPart extends OpenCodePartBase {
+  type: 'snapshot';
+  snapshot?: string;
+}
+
+/**
  * Discriminated union of all OpenCode part types.
  */
 export type OpenCodePart =
@@ -180,7 +229,12 @@ export type OpenCodePart =
   | OpenCodeDbToolPart
   | OpenCodeStepStartPart
   | OpenCodeStepFinishPart
-  | OpenCodePatchPart;
+  | OpenCodePatchPart
+  | OpenCodeSubtaskPart
+  | OpenCodeAgentPart
+  | OpenCodeFilePart
+  | OpenCodeRetryPart
+  | OpenCodeSnapshotPart;
 
 /**
  * OpenCode project metadata.

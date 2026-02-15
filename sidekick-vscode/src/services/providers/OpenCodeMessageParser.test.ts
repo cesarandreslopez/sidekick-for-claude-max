@@ -583,5 +583,280 @@ describe('OpenCodeMessageParser', () => {
         expect(part.text).toContain('future-type');
       }
     });
+
+    it('should parse a subtask part', () => {
+      const row: DbPart = {
+        id: 'prt_sub',
+        message_id: 'msg_1',
+        session_id: 'ses_1',
+        time_created: 1705312800000,
+        time_updated: 1705312800000,
+        data: JSON.stringify({
+          type: 'subtask',
+          prompt: 'Find all TypeScript files',
+          description: 'Search for TS files',
+          agent: 'Explore',
+          model: 'claude-sonnet-4-20250514',
+          command: 'explore'
+        })
+      };
+
+      const part = parseDbPartData(row);
+      expect(part.type).toBe('subtask');
+      if (part.type === 'subtask') {
+        expect(part.prompt).toBe('Find all TypeScript files');
+        expect(part.description).toBe('Search for TS files');
+        expect(part.agent).toBe('Explore');
+        expect(part.model).toBe('claude-sonnet-4-20250514');
+        expect(part.command).toBe('explore');
+      }
+    });
+
+    it('should parse an agent part', () => {
+      const row: DbPart = {
+        id: 'prt_agent',
+        message_id: 'msg_1',
+        session_id: 'ses_1',
+        time_created: 1705312800000,
+        time_updated: 1705312800000,
+        data: JSON.stringify({ type: 'agent', name: 'code-reviewer', source: 'builtin' })
+      };
+
+      const part = parseDbPartData(row);
+      expect(part.type).toBe('agent');
+      if (part.type === 'agent') {
+        expect(part.name).toBe('code-reviewer');
+        expect(part.source).toBe('builtin');
+      }
+    });
+
+    it('should parse a file part', () => {
+      const row: DbPart = {
+        id: 'prt_file',
+        message_id: 'msg_1',
+        session_id: 'ses_1',
+        time_created: 1705312800000,
+        time_updated: 1705312800000,
+        data: JSON.stringify({ type: 'file', mime: 'image/png', filename: 'screenshot.png', url: 'file:///tmp/screenshot.png' })
+      };
+
+      const part = parseDbPartData(row);
+      expect(part.type).toBe('file');
+      if (part.type === 'file') {
+        expect(part.mime).toBe('image/png');
+        expect(part.filename).toBe('screenshot.png');
+        expect(part.url).toBe('file:///tmp/screenshot.png');
+      }
+    });
+
+    it('should parse a retry part', () => {
+      const row: DbPart = {
+        id: 'prt_retry',
+        message_id: 'msg_1',
+        session_id: 'ses_1',
+        time_created: 1705312800000,
+        time_updated: 1705312800000,
+        data: JSON.stringify({
+          type: 'retry',
+          attempt: 2,
+          error: { message: 'Rate limited', code: '429' },
+          time: 1705312805000
+        })
+      };
+
+      const part = parseDbPartData(row);
+      expect(part.type).toBe('retry');
+      if (part.type === 'retry') {
+        expect(part.attempt).toBe(2);
+        expect(part.error?.message).toBe('Rate limited');
+        expect(part.error?.code).toBe('429');
+        expect(part.time).toBe(1705312805000);
+      }
+    });
+
+    it('should parse a snapshot part', () => {
+      const row: DbPart = {
+        id: 'prt_snap',
+        message_id: 'msg_1',
+        session_id: 'ses_1',
+        time_created: 1705312800000,
+        time_updated: 1705312800000,
+        data: JSON.stringify({ type: 'snapshot', snapshot: 'abc123def456' })
+      };
+
+      const part = parseDbPartData(row);
+      expect(part.type).toBe('snapshot');
+      if (part.type === 'snapshot') {
+        expect(part.snapshot).toBe('abc123def456');
+      }
+    });
+
+    it('should parse step-finish with tokens', () => {
+      const row: DbPart = {
+        id: 'prt_sf',
+        message_id: 'msg_1',
+        session_id: 'ses_1',
+        time_created: 1705312800000,
+        time_updated: 1705312800000,
+        data: JSON.stringify({
+          type: 'step-finish',
+          reason: 'end-turn',
+          cost: 0.005,
+          tokens: { input: 1000, output: 500, reasoning: 200, cache: { read: 300, write: 100 } }
+        })
+      };
+
+      const part = parseDbPartData(row);
+      expect(part.type).toBe('step-finish');
+      if (part.type === 'step-finish') {
+        expect(part.reason).toBe('end-turn');
+        expect(part.cost).toBe(0.005);
+        expect(part.tokens?.input).toBe(1000);
+        expect(part.tokens?.output).toBe(500);
+        expect(part.tokens?.reasoning).toBe(200);
+        expect(part.tokens?.cache?.read).toBe(300);
+        expect(part.tokens?.cache?.write).toBe(100);
+      }
+    });
+  });
+
+  describe('convertOpenCodeMessage with new part types', () => {
+    it('should convert subtask part to tool_use + tool_result in assistant message', () => {
+      const message: OpenCodeMessage = {
+        id: 'msg-sub',
+        sessionID: 'sess-1',
+        role: 'assistant',
+        tokens: { input: 500, output: 300 },
+        time: { created: '2025-01-15T10:00:01Z' }
+      };
+      const parts: OpenCodePart[] = [
+        {
+          id: 'part-sub-1',
+          messageID: 'msg-sub',
+          type: 'subtask',
+          description: 'Explore codebase',
+          agent: 'Explore',
+          model: 'claude-sonnet-4-20250514',
+          prompt: 'Find all API endpoints',
+        }
+      ];
+
+      const events = convertOpenCodeMessage(message, parts);
+
+      // Should have assistant event + synthetic tool_result
+      expect(events).toHaveLength(2);
+
+      const assistantEvent = events[0];
+      expect(assistantEvent.type).toBe('assistant');
+      const content = assistantEvent.message.content as unknown[];
+      expect(content[0]).toEqual({
+        type: 'tool_use',
+        id: 'subtask-part-sub-1',
+        name: 'Subtask',
+        input: {
+          description: 'Explore codebase',
+          agent: 'Explore',
+          model: 'claude-sonnet-4-20250514',
+          prompt: 'Find all API endpoints',
+          command: undefined,
+        }
+      });
+
+      const resultEvent = events[1];
+      expect(resultEvent.type).toBe('user');
+      const resultContent = resultEvent.message.content as unknown[];
+      expect(resultContent[0]).toEqual({
+        type: 'tool_result',
+        tool_use_id: 'subtask-part-sub-1',
+        content: 'Explore codebase',
+        is_error: false
+      });
+    });
+
+    it('should convert file part to text block in assistant message', () => {
+      const message: OpenCodeMessage = {
+        id: 'msg-file',
+        sessionID: 'sess-1',
+        role: 'assistant',
+        tokens: { input: 100, output: 50 },
+        time: { created: '2025-01-15T10:00:01Z' }
+      };
+      const parts: OpenCodePart[] = [
+        { id: 'part-f1', messageID: 'msg-file', type: 'file', mime: 'text/plain', filename: 'output.log' }
+      ];
+
+      const events = convertOpenCodeMessage(message, parts);
+
+      expect(events).toHaveLength(1);
+      const content = events[0].message.content as { type: string; text: string }[];
+      expect(content[0]).toEqual({ type: 'text', text: '[File: output.log (text/plain)]' });
+    });
+
+    it('should convert retry part to text block in assistant message', () => {
+      const message: OpenCodeMessage = {
+        id: 'msg-retry',
+        sessionID: 'sess-1',
+        role: 'assistant',
+        tokens: { input: 100, output: 50 },
+        time: { created: '2025-01-15T10:00:01Z' }
+      };
+      const parts: OpenCodePart[] = [
+        { id: 'part-r1', messageID: 'msg-retry', type: 'retry', attempt: 3, error: { message: 'Timeout' } }
+      ];
+
+      const events = convertOpenCodeMessage(message, parts);
+
+      expect(events).toHaveLength(1);
+      const content = events[0].message.content as { type: string; text: string }[];
+      expect(content[0]).toEqual({ type: 'text', text: '[Retry attempt 3: Timeout]' });
+    });
+
+    it('should skip agent and snapshot parts in assistant message', () => {
+      const message: OpenCodeMessage = {
+        id: 'msg-meta',
+        sessionID: 'sess-1',
+        role: 'assistant',
+        tokens: { input: 100, output: 50 },
+        time: { created: '2025-01-15T10:00:01Z' }
+      };
+      const parts: OpenCodePart[] = [
+        { id: 'part-a1', messageID: 'msg-meta', type: 'agent', name: 'reviewer', source: 'plugin' },
+        { id: 'part-s1', messageID: 'msg-meta', type: 'snapshot', snapshot: 'snap123' },
+        { id: 'part-t1', messageID: 'msg-meta', type: 'text', text: 'Hello' }
+      ];
+
+      const events = convertOpenCodeMessage(message, parts);
+
+      expect(events).toHaveLength(1);
+      const content = events[0].message.content as unknown[];
+      // Only the text part should appear
+      expect(content).toHaveLength(1);
+      expect(content[0]).toEqual({ type: 'text', text: 'Hello' });
+    });
+
+    it('should convert file and subtask parts in user message', () => {
+      const message: OpenCodeMessage = {
+        id: 'msg-user-new',
+        sessionID: 'sess-1',
+        role: 'user',
+        tokens: { input: 0, output: 0 },
+        time: { created: '2025-01-15T10:00:00Z' }
+      };
+      const parts: OpenCodePart[] = [
+        { id: 'part-1', messageID: 'msg-user-new', type: 'text', text: 'Check this file' },
+        { id: 'part-2', messageID: 'msg-user-new', type: 'file', mime: 'image/png', filename: 'screen.png' },
+        { id: 'part-3', messageID: 'msg-user-new', type: 'subtask', description: 'Run analysis' }
+      ];
+
+      const events = convertOpenCodeMessage(message, parts);
+
+      expect(events).toHaveLength(1);
+      expect(events[0].type).toBe('user');
+      const content = events[0].message.content as { type: string; text: string }[];
+      expect(content).toHaveLength(3);
+      expect(content[0]).toEqual({ type: 'text', text: 'Check this file' });
+      expect(content[1]).toEqual({ type: 'text', text: '[File: screen.png (image/png)]' });
+      expect(content[2]).toEqual({ type: 'text', text: '[Subtask: Run analysis]' });
+    });
   });
 });

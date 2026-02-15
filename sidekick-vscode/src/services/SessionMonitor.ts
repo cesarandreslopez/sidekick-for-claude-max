@@ -342,6 +342,12 @@ export class SessionMonitor implements vscode.Disposable {
         this.stats.lastModelId = usageSnapshot.model;
       }
 
+      // Seed context attribution from provider if available (e.g., OpenCode DB)
+      const providerAttribution = this.provider.getContextAttribution?.(this.sessionPath);
+      if (providerAttribution) {
+        this.contextAttribution = providerAttribution;
+      }
+
       // Read existing content
       await this.readInitialContent();
 
@@ -775,6 +781,12 @@ export class SessionMonitor implements vscode.Disposable {
       this.stats.currentContextSize = snapshotContextSize;
       this.lastModelId = usageSnapshot.model;
       this.stats.lastModelId = usageSnapshot.model;
+    }
+
+    // Seed context attribution from provider if available
+    const providerAttribution = this.provider.getContextAttribution?.(sessionPath);
+    if (providerAttribution) {
+      this.contextAttribution = providerAttribution;
     }
 
     // Re-setup watcher to track the new session file

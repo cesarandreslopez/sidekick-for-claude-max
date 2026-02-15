@@ -63,6 +63,10 @@ function convertUserMessage(
   for (const part of parts) {
     if (part.type === 'text') {
       content.push({ type: 'text', text: part.text });
+    } else if (part.type === 'file') {
+      content.push({ type: 'text', text: `[File: ${part.filename || 'unknown'} (${part.mime || 'unknown'})]` });
+    } else if (part.type === 'subtask') {
+      content.push({ type: 'text', text: `[Subtask: ${part.description || 'unknown'}]` });
     }
   }
 
@@ -134,6 +138,40 @@ function convertAssistantMessage(
         // Timeline markers — no content to emit
         break;
 
+      case 'subtask':
+        content.push({
+          type: 'tool_use',
+          id: `subtask-${part.id}`,
+          name: 'Subtask',
+          input: {
+            description: part.description,
+            agent: part.agent,
+            model: part.model,
+            prompt: part.prompt,
+            command: part.command,
+          }
+        });
+        break;
+
+      case 'file':
+        content.push({
+          type: 'text',
+          text: `[File: ${part.filename || 'unknown'} (${part.mime || 'unknown'})]`
+        });
+        break;
+
+      case 'retry':
+        content.push({
+          type: 'text',
+          text: `[Retry attempt ${part.attempt ?? '?'}: ${part.error?.message || 'unknown error'}]`
+        });
+        break;
+
+      case 'agent':
+      case 'snapshot':
+        // Metadata only — no user-visible content
+        break;
+
       case 'compaction':
         // Will add summary event below
         break;
@@ -167,9 +205,9 @@ function convertAssistantMessage(
     });
   }
 
-  // Emit synthetic tool_result events for completed tool invocations.
-  // In Claude Code's format, tool results come as user messages with
-  // tool_result content blocks. We replicate that pattern here.
+  // Emit synthetic tool_result events for completed tool invocations
+  // and subtask parts. In Claude Code's format, tool results come as
+  // user messages with tool_result content blocks.
   for (const part of parts) {
     if ((part.type === 'tool-invocation' || part.type === 'tool') &&
         (part.state.status === 'completed' || part.state.status === 'error')) {
@@ -189,6 +227,24 @@ function convertAssistantMessage(
         type: 'user',
         message: { role: 'user', id: `${message.id}:${part.callID}:result`, content: resultContent },
         timestamp: resultTimestamp
+      });
+    }
+
+    // Subtask parts get a synthetic tool_result so they appear in the timeline
+    if (part.type === 'subtask') {
+      events.push({
+        type: 'user',
+        message: {
+          role: 'user',
+          id: `${message.id}:subtask-${part.id}:result`,
+          content: [{
+            type: 'tool_result',
+            tool_use_id: `subtask-${part.id}`,
+            content: part.description || 'Subtask completed',
+            is_error: false
+          }]
+        },
+        timestamp
       });
     }
   }
@@ -301,14 +357,26 @@ export function parseDbPartData(row: DbPart): OpenCodePart {
     case 'step-start':
       return { ...base, type: 'step-start', snapshot: data.snapshot as string | undefined };
 
-    case 'step-finish':
+    case 'step-finish': {
+      const tokensData = data.tokens as Record<string, unknown> | undefined;
+      const cacheData = tokensData?.cache as Record<string, unknown> | undefined;
       return {
         ...base,
         type: 'step-finish',
         reason: data.reason as string | undefined,
         snapshot: data.snapshot as string | undefined,
         cost: data.cost as number | undefined,
+        tokens: tokensData ? {
+          input: tokensData.input as number | undefined,
+          output: tokensData.output as number | undefined,
+          reasoning: tokensData.reasoning as number | undefined,
+          cache: cacheData ? {
+            read: cacheData.read as number | undefined,
+            write: cacheData.write as number | undefined,
+          } : undefined,
+        } : undefined,
       };
+    }
 
     case 'patch':
       return {
@@ -316,6 +384,55 @@ export function parseDbPartData(row: DbPart): OpenCodePart {
         type: 'patch',
         hash: data.hash as string | undefined,
         files: data.files as string[] | undefined,
+      };
+
+    case 'subtask':
+      return {
+        ...base,
+        type: 'subtask',
+        prompt: data.prompt as string | undefined,
+        description: data.description as string | undefined,
+        agent: data.agent as string | undefined,
+        model: data.model as string | undefined,
+        command: data.command as string | undefined,
+      };
+
+    case 'agent':
+      return {
+        ...base,
+        type: 'agent',
+        name: data.name as string | undefined,
+        source: data.source as string | undefined,
+      };
+
+    case 'file':
+      return {
+        ...base,
+        type: 'file',
+        mime: data.mime as string | undefined,
+        filename: data.filename as string | undefined,
+        url: data.url as string | undefined,
+      };
+
+    case 'retry': {
+      const errorData = data.error as Record<string, unknown> | undefined;
+      return {
+        ...base,
+        type: 'retry',
+        attempt: data.attempt as number | undefined,
+        error: errorData ? {
+          message: errorData.message as string | undefined,
+          code: errorData.code as string | undefined,
+        } : undefined,
+        time: data.time as string | number | undefined,
+      };
+    }
+
+    case 'snapshot':
+      return {
+        ...base,
+        type: 'snapshot',
+        snapshot: data.snapshot as string | undefined,
       };
 
     default:

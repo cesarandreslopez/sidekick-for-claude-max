@@ -10,7 +10,7 @@
  */
 
 import type * as vscode from 'vscode';
-import type { ClaudeSessionEvent, SubagentStats, TokenUsage } from './claudeSession';
+import type { ClaudeSessionEvent, ContextAttribution, SubagentStats, TokenUsage } from './claudeSession';
 
 /**
  * Information about a single session file.
@@ -157,4 +157,7 @@ export interface SessionProvider extends vscode.Disposable {
 
   /** Gets latest assistant usage snapshot for an active session, if available. */
   getCurrentUsageSnapshot?(sessionPath: string): TokenUsage | null;
+
+  /** Gets context attribution breakdown from provider data, if available. */
+  getContextAttribution?(sessionPath: string): ContextAttribution | null;
 }
