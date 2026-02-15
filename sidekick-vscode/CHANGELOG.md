@@ -5,6 +5,21 @@ All notable changes to the Sidekick for Max VS Code extension will be documented
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.1] - 2026-02-15
+
+### Added
+
+- **Subagent Cards on Kanban Board**: Spawned subagents (via the `Task` tool) now appear as cards on the Kanban board
+  - Each subagent spawn creates an "In Progress" card with the agent's description as the title
+  - Cards show agent type chip (e.g. "Explore", "Plan", "Bash") with cyan accent
+  - Cards move to "Completed" when the subagent finishes (or are removed on failure)
+  - Visually distinguished from regular tasks with a cyan left border
+  - Header summary shows separate counts (e.g. "3 tasks, 2 agents")
+
+### Fixed
+
+- **Kanban board refresh on subagent completion**: Board now updates immediately when a subagent finishes instead of waiting for the next tool call
+
 ## [0.9.0] - 2026-02-14
 
 ### Added

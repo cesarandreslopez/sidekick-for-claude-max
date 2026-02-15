@@ -103,9 +103,10 @@ Monitor your Claude Code sessions in real-time with a comprehensive analytics da
 
 ![Mind map visualization](assets/node_visualization_graph.gif)
 
-- **Kanban Board** - TaskCreate/TaskUpdate tasks grouped by status
+- **Kanban Board** - Tasks and subagent spawns grouped by status
+  - Subagent cards with cyan accent and agent type chips (Explore, Plan, Bash, etc.)
   - Collapsible columns with hidden-task summaries
-  - Real-time updates as tasks move through the workflow
+  - Real-time updates as tasks and agents move through the workflow
 
 ![Kanban board](assets/kanban_style_monitoring.gif)
 

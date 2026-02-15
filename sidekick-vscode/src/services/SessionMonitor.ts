@@ -155,7 +155,7 @@ export class SessionMonitor implements vscode.Disposable {
   }> = new Map();
 
   /** Task-related tool names */
-  private static readonly TASK_TOOLS = ['TaskCreate', 'TaskUpdate', 'TaskGet', 'TaskList'];
+  private static readonly TASK_TOOLS = ['TaskCreate', 'TaskUpdate', 'TaskGet', 'TaskList', 'Task'];
 
   /** Creates an empty context attribution object */
   private static emptyAttribution(): ContextAttribution {
@@ -2229,6 +2229,29 @@ export class SessionMonitor implements vscode.Disposable {
         activeForm: toolUse.input.activeForm ? String(toolUse.input.activeForm) : undefined,
         timestamp: now
       });
+    } else if (toolUse.name === 'Task') {
+      // Subagent spawn — create a TrackedTask immediately as in_progress
+      const agentTaskId = 'agent-' + toolUse.id;
+      const description = toolUse.input.description ? String(toolUse.input.description) : 'Subagent';
+      const subagentType = toolUse.input.subagent_type ? String(toolUse.input.subagent_type) : undefined;
+
+      const newTask: TrackedTask = {
+        taskId: agentTaskId,
+        subject: description,
+        status: 'in_progress',
+        createdAt: now,
+        updatedAt: now,
+        activeForm: subagentType ? `Running ${subagentType} agent` : 'Running subagent',
+        blockedBy: [],
+        blocks: [],
+        associatedToolCalls: [],
+        isSubagent: true,
+        subagentType,
+        toolUseId: toolUse.id
+      };
+
+      this.taskState.tasks.set(agentTaskId, newTask);
+      log(`Subagent spawned: ${agentTaskId} - "${description}" (${subagentType || 'unknown'})`);
     } else if (toolUse.name === 'TaskUpdate') {
       const taskId = String(toolUse.input.taskId || '');
       const task = this.taskState.tasks.get(taskId);
@@ -2318,6 +2341,18 @@ export class SessionMonitor implements vscode.Disposable {
           // Handle TaskCreate results
           if (pending.name === 'TaskCreate') {
             this.handleTaskCreateResult(toolResult.tool_use_id, toolResult.content, timestamp, toolResult.is_error);
+          }
+
+          // Handle Task (subagent) results
+          if (pending.name === 'Task') {
+            const agentTaskId = 'agent-' + toolResult.tool_use_id;
+            const agentTask = this.taskState.tasks.get(agentTaskId);
+            if (agentTask) {
+              agentTask.status = toolResult.is_error ? 'deleted' : 'completed';
+              agentTask.updatedAt = new Date(timestamp);
+              // Fire event so the board refreshes immediately
+              this._onToolCall.fire({ name: 'Task', input: {}, timestamp: new Date(timestamp) });
+            }
           }
 
           // Calculate duration

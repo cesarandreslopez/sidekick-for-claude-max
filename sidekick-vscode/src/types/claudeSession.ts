@@ -255,6 +255,15 @@ export interface TrackedTask {
 
   /** Tool calls made while this task was in_progress */
   associatedToolCalls: ToolCall[];
+
+  /** Whether this task represents a subagent spawn (Task tool) */
+  isSubagent?: boolean;
+
+  /** Subagent type (e.g. "Explore", "Plan", "Bash") */
+  subagentType?: string;
+
+  /** Tool use ID for correlating spawn with completion */
+  toolUseId?: string;
 }
 
 /**

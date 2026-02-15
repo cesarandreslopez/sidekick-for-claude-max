@@ -45,6 +45,12 @@ export interface TaskCard {
 
   /** Whether this is the currently active task */
   isActive: boolean;
+
+  /** Whether this card represents a subagent spawn */
+  isSubagent?: boolean;
+
+  /** Subagent type (e.g. "Explore", "Plan", "Bash") */
+  subagentType?: string;
 }
 
 /**

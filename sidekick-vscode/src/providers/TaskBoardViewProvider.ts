@@ -230,7 +230,9 @@ export class TaskBoardViewProvider implements vscode.WebviewViewProvider, vscode
       toolCallCount: task.associatedToolCalls.length,
       blockedBy: task.blockedBy,
       blocks: task.blocks,
-      isActive: activeTaskId === task.taskId
+      isActive: task.isSubagent ? false : activeTaskId === task.taskId,
+      isSubagent: task.isSubagent,
+      subagentType: task.subagentType
     };
   }
 
@@ -449,6 +451,15 @@ export class TaskBoardViewProvider implements vscode.WebviewViewProvider, vscode
       box-shadow: 0 0 0 1px var(--vscode-focusBorder);
     }
 
+    .card.subagent {
+      border-left: 3px solid var(--vscode-terminal-ansiCyan, #4ec9b0);
+    }
+
+    .chip.agent-type {
+      background: var(--vscode-terminal-ansiCyan, #4ec9b0);
+      color: var(--vscode-editor-background);
+    }
+
     .card-title {
       font-size: 12px;
       font-weight: 600;
@@ -536,7 +547,7 @@ export class TaskBoardViewProvider implements vscode.WebviewViewProvider, vscode
   </div>
   <div id="board" class="board"></div>
   <div id="empty" class="empty-state" hidden>
-    <p>No tasks yet. Tasks appear when Claude Code emits TaskCreate or TaskUpdate events.</p>
+    <p>No tasks yet. Tasks appear when Claude Code creates tasks or spawns subagents.</p>
   </div>
 
   <script nonce="${nonce}">
@@ -561,9 +572,15 @@ export class TaskBoardViewProvider implements vscode.WebviewViewProvider, vscode
 
       statusEl.textContent = state.sessionActive ? 'Active' : 'Idle';
       statusEl.classList.toggle('active', state.sessionActive);
-      summaryEl.textContent = state.totalTasks
-        + ' task'
-        + (state.totalTasks === 1 ? '' : 's')
+
+      const allCards = (state.columns || []).flatMap(function(c) { return c.tasks || []; });
+      const agentCount = allCards.filter(function(t) { return t.isSubagent; }).length;
+      const taskCount = state.totalTasks - agentCount;
+      const parts = [];
+      if (taskCount > 0) parts.push(taskCount + ' task' + (taskCount === 1 ? '' : 's'));
+      if (agentCount > 0) parts.push(agentCount + ' agent' + (agentCount === 1 ? '' : 's'));
+      if (parts.length === 0) parts.push('0 tasks');
+      summaryEl.textContent = parts.join(', ')
         + ' · Updated '
         + formatTime(state.lastUpdated);
 
@@ -646,7 +663,10 @@ export class TaskBoardViewProvider implements vscode.WebviewViewProvider, vscode
 
     function renderCard(task) {
       const card = document.createElement('article');
-      card.className = 'card ' + (task.isActive ? 'active' : '');
+      const classes = ['card'];
+      if (task.isActive) classes.push('active');
+      if (task.isSubagent) classes.push('subagent');
+      card.className = classes.join(' ');
 
       const title = document.createElement('div');
       title.className = 'card-title';
@@ -655,13 +675,22 @@ export class TaskBoardViewProvider implements vscode.WebviewViewProvider, vscode
 
       const meta = document.createElement('div');
       meta.className = 'card-meta';
-      meta.textContent = '#'
-        + task.taskId
-        + ' · Updated '
-        + formatTime(task.updatedAt);
+      if (task.isSubagent) {
+        meta.textContent = 'Agent · Updated ' + formatTime(task.updatedAt);
+      } else {
+        meta.textContent = '#'
+          + task.taskId
+          + ' · Updated '
+          + formatTime(task.updatedAt);
+      }
       card.appendChild(meta);
 
-      if (task.activeForm) {
+      if (task.isSubagent && task.subagentType) {
+        const typeChip = document.createElement('span');
+        typeChip.className = 'chip agent-type';
+        typeChip.textContent = task.subagentType;
+        card.appendChild(typeChip);
+      } else if (task.activeForm) {
         const activeChip = document.createElement('span');
         activeChip.className = 'chip';
         activeChip.textContent = task.activeForm;
@@ -671,35 +700,42 @@ export class TaskBoardViewProvider implements vscode.WebviewViewProvider, vscode
       if (task.description) {
         const desc = document.createElement('div');
         desc.className = 'card-desc';
-        desc.textContent = task.description;
+        const maxLen = task.isSubagent ? 80 : 0;
+        desc.textContent = maxLen && task.description.length > maxLen
+          ? task.description.substring(0, maxLen) + '…'
+          : task.description;
         card.appendChild(desc);
       }
 
       const activity = document.createElement('div');
       activity.className = 'card-activity';
 
-      const toolChip = document.createElement('span');
-      toolChip.className = 'chip';
-      toolChip.textContent = task.toolCallCount
-        + ' tool'
-        + (task.toolCallCount === 1 ? '' : 's');
-      activity.appendChild(toolChip);
+      if (!task.isSubagent) {
+        const toolChip = document.createElement('span');
+        toolChip.className = 'chip';
+        toolChip.textContent = task.toolCallCount
+          + ' tool'
+          + (task.toolCallCount === 1 ? '' : 's');
+        activity.appendChild(toolChip);
 
-      if (task.blockedBy && task.blockedBy.length > 0) {
-        const blockedChip = document.createElement('span');
-        blockedChip.className = 'chip';
-        blockedChip.textContent = 'blocked by ' + task.blockedBy.length;
-        activity.appendChild(blockedChip);
+        if (task.blockedBy && task.blockedBy.length > 0) {
+          const blockedChip = document.createElement('span');
+          blockedChip.className = 'chip';
+          blockedChip.textContent = 'blocked by ' + task.blockedBy.length;
+          activity.appendChild(blockedChip);
+        }
+
+        if (task.blocks && task.blocks.length > 0) {
+          const blocksChip = document.createElement('span');
+          blocksChip.className = 'chip';
+          blocksChip.textContent = 'blocks ' + task.blocks.length;
+          activity.appendChild(blocksChip);
+        }
       }
 
-      if (task.blocks && task.blocks.length > 0) {
-        const blocksChip = document.createElement('span');
-        blocksChip.className = 'chip';
-        blocksChip.textContent = 'blocks ' + task.blocks.length;
-        activity.appendChild(blocksChip);
+      if (activity.childNodes.length > 0) {
+        card.appendChild(activity);
       }
-
-      card.appendChild(activity);
 
       return card;
     }
