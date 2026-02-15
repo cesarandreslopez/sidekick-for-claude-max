@@ -26,6 +26,12 @@ export interface MessageUsage {
 
   /** Number of tokens read from cache (0.1x input cost) */
   cache_read_input_tokens?: number;
+
+  /** Cost reported by the provider (used by OpenCode) */
+  reported_cost?: number;
+
+  /** Number of reasoning/thinking tokens (used by OpenCode) */
+  reasoning_tokens?: number;
 }
 
 /**
@@ -36,6 +42,9 @@ export interface MessageUsage {
 export interface SessionMessage {
   /** Message role (user, assistant, etc.) */
   role: string;
+
+  /** Optional message identifier (for deduplication) */
+  id?: string;
 
   /** Model identifier (e.g., "claude-opus-4-20250514") */
   model?: string;
@@ -104,6 +113,12 @@ export interface TokenUsage {
 
   /** When this usage occurred */
   timestamp: Date;
+
+  /** Cost reported by the provider (bypasses local pricing calculation) */
+  reportedCost?: number;
+
+  /** Number of reasoning/thinking tokens */
+  reasoningTokens?: number;
 }
 
 /**
@@ -437,6 +452,9 @@ export interface SessionStats {
 
   /** Estimated context token attribution by content category */
   contextAttribution?: ContextAttribution;
+
+  /** Total cost reported by the provider (when available, e.g., OpenCode) */
+  totalReportedCost?: number;
 }
 
 /**

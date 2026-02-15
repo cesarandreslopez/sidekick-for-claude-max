@@ -52,7 +52,7 @@ export class SessionSummaryService {
   /**
    * Builds a complete session summary from stats and analysis data.
    */
-  generateSummary(stats: SessionStats, analysisData: SessionAnalysisData): SessionSummaryData {
+  generateSummary(stats: SessionStats, analysisData: SessionAnalysisData, contextWindowLimit: number = 200_000): SessionSummaryData {
     const duration = stats.sessionStartTime
       ? Date.now() - stats.sessionStartTime.getTime()
       : 0;
@@ -60,7 +60,7 @@ export class SessionSummaryService {
     const totalTokens = stats.totalInputTokens + stats.totalOutputTokens;
     const totalCost = this._computeTotalCost(stats);
     const apiCalls = stats.messageCount;
-    const contextPeak = (stats.currentContextSize / 200_000) * 100;
+    const contextPeak = (stats.currentContextSize / contextWindowLimit) * 100;
 
     // Tasks
     const tasks = this._buildTaskSummaries(stats.taskState, totalCost, stats.toolCalls);
@@ -297,6 +297,9 @@ export class SessionSummaryService {
   // ── Private helpers ──
 
   private _computeTotalCost(stats: SessionStats): number {
+    if (stats.totalReportedCost !== undefined && stats.totalReportedCost > 0) {
+      return stats.totalReportedCost;
+    }
     let cost = 0;
     stats.modelUsage.forEach((usage, model) => {
       const pricing = ModelPricingService.getPricing(model);

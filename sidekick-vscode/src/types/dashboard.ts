@@ -88,6 +88,7 @@ export type DashboardMessage =
   | { type: 'updateTimeline'; events: TimelineEventDisplay[] }
   | { type: 'sessionStart'; sessionPath: string }
   | { type: 'sessionEnd' }
+  | { type: 'updateSessionProvider'; providerId: 'claude-code' | 'opencode'; displayName: string }
   | { type: 'updateSessionList'; groups: SessionGroup[]; isPinned: boolean; isUsingCustomPath?: boolean; customPathDisplay?: string | null }
   | { type: 'discoveryModeChange'; inDiscoveryMode: boolean }
   | { type: 'updateQuota'; quota: QuotaState }
@@ -120,6 +121,7 @@ export type DashboardWebviewMessage =
   | { type: 'webviewReady' }
   | { type: 'requestStats' }
   | { type: 'selectSession'; sessionPath: string }
+  | { type: 'setSessionProvider'; providerId: 'claude-code' | 'opencode' }
   | { type: 'refreshSessions' }
   | { type: 'togglePin' }
   | { type: 'browseSessionFolders' }

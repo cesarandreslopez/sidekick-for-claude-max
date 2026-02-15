@@ -1,0 +1,325 @@
+/**
+ * @fileoverview Converts OpenCode message + parts into ClaudeSessionEvent format.
+ *
+ * OpenCode stores messages and their parts as separate JSON files.
+ * This module converts them to the ClaudeSessionEvent format used by
+ * SessionMonitor, enabling all existing event processing logic to work
+ * unchanged with OpenCode sessions.
+ *
+ * @module services/providers/OpenCodeMessageParser
+ */
+
+import type { ClaudeSessionEvent } from '../../types/claudeSession';
+import type { OpenCodeMessage, OpenCodePart, DbMessage, DbPart } from '../../types/opencode';
+
+/**
+ * Converts a timestamp value (ISO string or Unix ms) to ISO string.
+ */
+function toISOString(time: string | number | undefined): string {
+  if (!time) return new Date().toISOString();
+  if (typeof time === 'string') return time;
+  return new Date(time).toISOString();
+}
+
+/**
+ * Converts an OpenCode message and its parts into ClaudeSessionEvent array.
+ *
+ * Maps OpenCode's message/part model to the flat event stream that
+ * SessionMonitor expects. A single OpenCode message may produce multiple
+ * events (assistant message, tool results, compaction markers).
+ *
+ * @param message - OpenCode MessageV2 object
+ * @param parts - Array of OpenCode parts belonging to this message
+ * @returns Array of ClaudeSessionEvent objects
+ */
+export function convertOpenCodeMessage(
+  message: OpenCodeMessage,
+  parts: OpenCodePart[]
+): ClaudeSessionEvent[] {
+  const events: ClaudeSessionEvent[] = [];
+
+  // Sort parts by index if available
+  const sortedParts = [...parts].sort((a, b) => (a.index ?? 0) - (b.index ?? 0));
+
+  if (message.role === 'user') {
+    events.push(...convertUserMessage(message, sortedParts));
+  } else if (message.role === 'assistant') {
+    events.push(...convertAssistantMessage(message, sortedParts));
+  }
+
+  return events;
+}
+
+/**
+ * Converts a user-role message to events.
+ */
+function convertUserMessage(
+  message: OpenCodeMessage,
+  parts: OpenCodePart[]
+): ClaudeSessionEvent[] {
+  const events: ClaudeSessionEvent[] = [];
+  const content: unknown[] = [];
+
+  for (const part of parts) {
+    if (part.type === 'text') {
+      content.push({ type: 'text', text: part.text });
+    }
+  }
+
+  if (content.length > 0) {
+    events.push({
+      type: 'user',
+      message: { role: 'user', id: message.id, content },
+      timestamp: toISOString(message.time.created)
+    });
+  }
+
+  return events;
+}
+
+/**
+ * Converts an assistant-role message to events.
+ *
+ * Produces:
+ * 1. An assistant event with text, thinking, and tool_use content blocks
+ * 2. Synthetic user events for completed tool results
+ * 3. A summary event if compaction was detected
+ */
+function convertAssistantMessage(
+  message: OpenCodeMessage,
+  parts: OpenCodePart[]
+): ClaudeSessionEvent[] {
+  const events: ClaudeSessionEvent[] = [];
+  const content: unknown[] = [];
+
+  for (const part of parts) {
+    switch (part.type) {
+      case 'text':
+        content.push({ type: 'text', text: part.text });
+        break;
+
+      case 'reasoning':
+        content.push({ type: 'thinking', thinking: part.text });
+        break;
+
+      case 'tool-invocation':
+        content.push({
+          type: 'tool_use',
+          id: part.callID,
+          name: part.tool,
+          input: part.state.input || {}
+        });
+        break;
+
+      case 'tool':
+        content.push({
+          type: 'tool_use',
+          id: part.callID,
+          name: part.tool,
+          input: part.state.input || {}
+        });
+        break;
+
+      case 'patch':
+        content.push({
+          type: 'tool_use',
+          id: `patch-${part.id}`,
+          name: 'Patch',
+          input: { hash: part.hash, files: part.files }
+        });
+        break;
+
+      case 'step-start':
+      case 'step-finish':
+        // Timeline markers — no content to emit
+        break;
+
+      case 'compaction':
+        // Will add summary event below
+        break;
+    }
+  }
+
+  // Build usage data from message tokens
+  const usage = {
+    input_tokens: message.tokens.input || 0,
+    output_tokens: message.tokens.output || 0,
+    cache_creation_input_tokens: message.tokens.cacheWrite || 0,
+    cache_read_input_tokens: message.tokens.cacheRead || 0,
+    reported_cost: message.cost && message.cost > 0 ? message.cost : undefined,
+    reasoning_tokens: message.tokens.reasoning || 0,
+  };
+
+  const timestamp = toISOString(message.time.completed || message.time.created);
+
+  // Emit assistant event (even if content is empty, usage data is valuable)
+  if (content.length > 0 || message.tokens.input > 0 || message.tokens.output > 0) {
+    events.push({
+      type: 'assistant',
+      message: {
+        role: 'assistant',
+        id: message.id,
+        model: message.modelID,
+        usage,
+        content
+      },
+      timestamp
+    });
+  }
+
+  // Emit synthetic tool_result events for completed tool invocations.
+  // In Claude Code's format, tool results come as user messages with
+  // tool_result content blocks. We replicate that pattern here.
+  for (const part of parts) {
+    if ((part.type === 'tool-invocation' || part.type === 'tool') &&
+        (part.state.status === 'completed' || part.state.status === 'error')) {
+
+      const resultContent: unknown[] = [{
+        type: 'tool_result',
+        tool_use_id: part.callID,
+        content: part.state.status === 'error' ? part.state.error : part.state.output,
+        is_error: part.state.status === 'error'
+      }];
+
+      const resultTimestamp = part.state.time?.end
+        ? toISOString(part.state.time.end)
+        : timestamp;
+
+      events.push({
+        type: 'user',
+        message: { role: 'user', id: `${message.id}:${part.callID}:result`, content: resultContent },
+        timestamp: resultTimestamp
+      });
+    }
+  }
+
+  // Detect compaction via summary flag or compaction part
+  const hasCompaction = message.summary || parts.some(p => p.type === 'compaction');
+  if (hasCompaction) {
+    events.push({
+      type: 'summary',
+      message: { role: 'assistant', id: `${message.id}:summary`, content: 'Context compacted' },
+      timestamp
+    });
+  }
+
+  return events;
+}
+
+// --- DB-to-OpenCode adapter functions ---
+
+/**
+ * Parses a database message row's JSON `data` field into an OpenCodeMessage.
+ *
+ * DB messages store data as a JSON blob with slightly different field layout
+ * than the file-based format (e.g., `modelID` is at top level, tokens are
+ * nested under `tokens`).
+ */
+export function parseDbMessageData(row: DbMessage): OpenCodeMessage {
+  const data = JSON.parse(row.data) as Record<string, unknown>;
+  const time = data.time as Record<string, unknown> | undefined;
+  const tokens = data.tokens as Record<string, unknown> | undefined;
+  const cache = tokens?.cache as Record<string, unknown> | undefined;
+  const summary = data.summary as Record<string, unknown> | undefined;
+
+  return {
+    id: row.id,
+    sessionID: row.session_id,
+    role: (data.role as string) as 'user' | 'assistant' | 'system',
+    modelID: data.modelID as string | undefined,
+    summary: summary != null ? true : undefined,
+    cost: (data.cost as number) || undefined,
+    providerID: (data.providerID as string) || undefined,
+    tokens: {
+      input: (tokens?.input as number) || 0,
+      output: (tokens?.output as number) || 0,
+      cacheRead: (cache?.read as number) || 0,
+      cacheWrite: (cache?.write as number) || 0,
+      reasoning: (tokens?.reasoning as number) || 0,
+    },
+    time: {
+      created: (time?.created as number) || row.time_created,
+      completed: (time?.completed as number) || undefined,
+    },
+  };
+}
+
+/**
+ * Parses a database part row's JSON `data` field into an OpenCodePart.
+ */
+export function parseDbPartData(row: DbPart): OpenCodePart {
+  const data = JSON.parse(row.data) as Record<string, unknown>;
+  const type = data.type as string;
+  const base = { id: row.id, messageID: row.message_id };
+
+  switch (type) {
+    case 'text':
+      return { ...base, type: 'text', text: (data.text as string) || '' };
+
+    case 'reasoning':
+      return { ...base, type: 'reasoning', text: (data.text as string) || '' };
+
+    case 'tool': {
+      const state = data.state as Record<string, unknown> | undefined;
+      return {
+        ...base,
+        type: 'tool',
+        callID: (data.callID as string) || '',
+        tool: (data.tool as string) || '',
+        state: {
+          status: ((state?.status as string) || 'completed') as 'pending' | 'running' | 'completed' | 'error',
+          input: state?.input as Record<string, unknown> | undefined,
+          output: state?.output as string | undefined,
+          error: state?.error as string | undefined,
+          title: state?.title as string | undefined,
+          metadata: state?.metadata as Record<string, unknown> | undefined,
+          time: state?.time as { start?: string | number; end?: string | number; compacted?: string | number } | undefined,
+        },
+      };
+    }
+
+    case 'tool-invocation': {
+      const state = data.state as Record<string, unknown> | undefined;
+      return {
+        ...base,
+        type: 'tool-invocation',
+        callID: (data.callID as string) || '',
+        tool: (data.tool as string) || '',
+        state: {
+          status: ((state?.status as string) || 'completed') as 'pending' | 'running' | 'completed' | 'error',
+          input: state?.input as Record<string, unknown> | undefined,
+          output: state?.output as string | undefined,
+          error: state?.error as string | undefined,
+          time: state?.time as { start?: string | number; end?: string | number } | undefined,
+        },
+      };
+    }
+
+    case 'compaction':
+      return { ...base, type: 'compaction', text: data.text as string | undefined };
+
+    case 'step-start':
+      return { ...base, type: 'step-start', snapshot: data.snapshot as string | undefined };
+
+    case 'step-finish':
+      return {
+        ...base,
+        type: 'step-finish',
+        reason: data.reason as string | undefined,
+        snapshot: data.snapshot as string | undefined,
+        cost: data.cost as number | undefined,
+      };
+
+    case 'patch':
+      return {
+        ...base,
+        type: 'patch',
+        hash: data.hash as string | undefined,
+        files: data.files as string[] | undefined,
+      };
+
+    default:
+      // Unknown part type — treat as text with raw JSON
+      return { ...base, type: 'text', text: JSON.stringify(data) };
+  }
+}

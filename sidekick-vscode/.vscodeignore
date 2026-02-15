@@ -19,7 +19,6 @@ out/extension.test.js.map
 
 # Dependencies and build artifacts
 node_modules/**
-!node_modules/@anthropic-ai/**
 dist/**
 
 # Other

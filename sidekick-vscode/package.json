@@ -2,7 +2,7 @@
   "name": "sidekick-for-max",
   "displayName": "Sidekick for Max",
   "description": "AI-powered code completions, transforms, commit messages, RSVP speed reading, and Claude Code session monitoring - all using your Claude Max subscription at no extra cost.",
-  "version": "0.9.1",
+  "version": "1.0.0",
   "publisher": "CesarAndresLopez",
   "author": {
     "name": "Cesar Andres Lopez",
@@ -59,7 +59,10 @@
       "properties": {
         "sidekick.authMode": {
           "type": "string",
-          "enum": ["api-key", "max-subscription"],
+          "enum": [
+            "api-key",
+            "max-subscription"
+          ],
           "default": "max-subscription",
           "description": "Authentication mode for Claude API",
           "enumDescriptions": [
@@ -206,7 +209,11 @@
         },
         "sidekick.reviewModel": {
           "type": "string",
-          "enum": ["haiku", "sonnet", "opus"],
+          "enum": [
+            "haiku",
+            "sonnet",
+            "opus"
+          ],
           "default": "sonnet",
           "description": "Model for pre-commit code review (sonnet=recommended for thoroughness)",
           "enumDescriptions": [
@@ -217,7 +224,11 @@
         },
         "sidekick.prDescriptionModel": {
           "type": "string",
-          "enum": ["haiku", "sonnet", "opus"],
+          "enum": [
+            "haiku",
+            "sonnet",
+            "opus"
+          ],
           "default": "sonnet",
           "description": "Model for PR description generation (sonnet=recommended for quality)",
           "enumDescriptions": [
@@ -243,7 +254,10 @@
         },
         "sidekick.commitMessageStyle": {
           "type": "string",
-          "enum": ["conventional", "simple"],
+          "enum": [
+            "conventional",
+            "simple"
+          ],
           "default": "conventional",
           "markdownEnumDescriptions": [
             "**Conventional Commits** - Structured format: `type(scope): description` (e.g., `feat(auth): add OAuth2 support`)",
@@ -253,7 +267,10 @@
         },
         "sidekick.rsvpMode": {
           "type": "string",
-          "enum": ["direct", "explain-first"],
+          "enum": [
+            "direct",
+            "explain-first"
+          ],
           "default": "direct",
           "description": "RSVP reading mode",
           "enumDescriptions": [
@@ -263,7 +280,13 @@
         },
         "sidekick.explanationComplexity": {
           "type": "string",
-          "enum": ["eli5", "curious-amateur", "imposter-syndrome", "senior", "phd"],
+          "enum": [
+            "eli5",
+            "curious-amateur",
+            "imposter-syndrome",
+            "senior",
+            "phd"
+          ],
           "default": "imposter-syndrome",
           "description": "Explanation complexity level for Explain-First mode",
           "enumDescriptions": [
@@ -276,7 +299,11 @@
         },
         "sidekick.explanationModel": {
           "type": "string",
-          "enum": ["haiku", "sonnet", "opus"],
+          "enum": [
+            "haiku",
+            "sonnet",
+            "opus"
+          ],
           "default": "sonnet",
           "description": "Model for generating explanations (sonnet=recommended)",
           "enumDescriptions": [
@@ -298,7 +325,22 @@
         "sidekick.enableSessionMonitoring": {
           "type": "boolean",
           "default": true,
-          "description": "Enable Claude Code session monitoring for token usage tracking"
+          "description": "Enable CLI agent session monitoring for token usage tracking"
+        },
+        "sidekick.sessionProvider": {
+          "type": "string",
+          "default": "auto",
+          "enum": [
+            "auto",
+            "claude-code",
+            "opencode"
+          ],
+          "enumDescriptions": [
+            "Auto-detect based on installed CLI agents",
+            "Monitor Claude Code sessions (~/.claude/projects/)",
+            "Monitor OpenCode sessions (~/.local/share/opencode/)"
+          ],
+          "description": "Which CLI coding agent to monitor. 'auto' detects based on installed tools and recent activity."
         },
         "sidekick.notifications.enabled": {
           "type": "boolean",
@@ -830,7 +872,7 @@
     "watch": "node esbuild.js --watch",
     "lint": "eslint src/",
     "lint:fix": "eslint src/ --fix",
-    "package": "vsce package --no-dependencies",
+    "package": "vsce package",
     "test": "vitest run",
     "test:watch": "vitest"
   },
@@ -847,7 +889,7 @@
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.2.12",
     "@anthropic-ai/sdk": "^0.71.2",
-    "marked": "^12.0.0",
-    "dompurify": "^3.0.0"
+    "dompurify": "^3.0.0",
+    "marked": "^12.0.0"
   }
 }

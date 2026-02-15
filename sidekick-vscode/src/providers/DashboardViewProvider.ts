@@ -65,8 +65,8 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
   /** Current context window size from session (actual context, not cumulative) */
   private _currentContextSize: number = 0;
 
-  /** Context window limit for Claude models (200K tokens) */
-  private readonly CONTEXT_WINDOW_LIMIT = 200_000;
+  /** Last observed model ID (for dynamic context window limit) */
+  private _lastModelId: string | undefined;
 
   /** Tool analytics by name */
   private _toolAnalytics: Map<string, ToolAnalytics> = new Map();
@@ -238,6 +238,7 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
         if (webviewView.visible) {
           this._sendStateToWebview();
           this._sendSessionList();
+          this._sendProviderInfo();
           // Start quota refresh when visible
           this._quotaService?.startRefresh();
         } else {
@@ -274,6 +275,7 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
         this._sendStateToWebview();
         this._sendBurnRateUpdate();
         this._sendSessionList();
+        this._sendProviderInfo();
         break;
 
       case 'requestStats':
@@ -284,6 +286,11 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
       case 'selectSession':
         log(`Dashboard: user selected session: ${message.sessionPath}`);
         this._sessionMonitor.switchToSession(message.sessionPath);
+        break;
+
+      case 'setSessionProvider':
+        log(`Dashboard: user selected session provider: ${message.providerId}`);
+        vscode.commands.executeCommand('sidekick.setSessionProvider', message.providerId);
         break;
 
       case 'refreshSessions':
@@ -627,7 +634,7 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
 
     const stats = this._sessionMonitor.getStats();
     const analysisData = this._sessionAnalyzer.getCachedData();
-    this._cachedSummary = this._summaryService.generateSummary(stats, analysisData);
+    this._cachedSummary = this._summaryService.generateSummary(stats, analysisData, this._getContextWindowLimit());
     this._postMessage({ type: 'updateSessionSummary', summary: this._cachedSummary });
   }
 
@@ -915,14 +922,22 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
    * @param usage - Token usage data
    */
   private _handleTokenUsage(usage: TokenUsage): void {
-    // Get pricing for the model
-    const pricing = ModelPricingService.getPricing(usage.model);
-    const cost = ModelPricingService.calculateCost({
-      inputTokens: usage.inputTokens,
-      outputTokens: usage.outputTokens,
-      cacheWriteTokens: usage.cacheWriteTokens,
-      cacheReadTokens: usage.cacheReadTokens
-    }, pricing);
+    // Track model for dynamic context window limit
+    this._lastModelId = usage.model;
+
+    // Use provider-reported cost when available, else calculate from pricing
+    let cost: number;
+    if (usage.reportedCost !== undefined && usage.reportedCost > 0) {
+      cost = usage.reportedCost;
+    } else {
+      const pricing = ModelPricingService.getPricing(usage.model);
+      cost = ModelPricingService.calculateCost({
+        inputTokens: usage.inputTokens,
+        outputTokens: usage.outputTokens,
+        cacheWriteTokens: usage.cacheWriteTokens,
+        cacheReadTokens: usage.cacheReadTokens
+      }, pricing);
+    }
 
     // Update totals
     this._state.totalInputTokens += usage.inputTokens;
@@ -952,8 +967,11 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
     const totalTokens = usage.inputTokens + usage.outputTokens + usage.cacheWriteTokens;
     this._burnRateCalculator.addEvent(totalTokens, usage.timestamp);
 
-    // Update current context size (input + cache = actual context window usage)
-    this._currentContextSize = usage.inputTokens + usage.cacheWriteTokens + usage.cacheReadTokens;
+    // Update current context size (provider-specific formula)
+    const provider = this._sessionMonitor.getProvider();
+    this._currentContextSize = provider.computeContextSize
+      ? provider.computeContextSize(usage)
+      : usage.inputTokens + usage.cacheWriteTokens + usage.cacheReadTokens;
 
     // Update context usage
     this._updateContextUsage();
@@ -1214,24 +1232,44 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
     this._state.modelBreakdown = [];
     this._state.totalCost = 0;
 
-    stats.modelUsage.forEach((usage, model) => {
-      const pricing = ModelPricingService.getPricing(model);
-      const cost = ModelPricingService.calculateCost({
-        inputTokens: usage.inputTokens,
-        outputTokens: usage.outputTokens,
-        cacheWriteTokens: usage.cacheWriteTokens,
-        cacheReadTokens: usage.cacheReadTokens,
-      }, pricing);
+    if (stats.totalReportedCost !== undefined && stats.totalReportedCost > 0) {
+      // Use provider-reported cost, distribute proportionally by token count
+      const totalTokens = Array.from(stats.modelUsage.values())
+        .reduce((sum, u) => sum + u.tokens, 0);
 
-      this._state.modelBreakdown.push({
-        model,
-        calls: usage.calls,
-        tokens: usage.tokens,
-        cost
+      stats.modelUsage.forEach((usage, model) => {
+        const proportion = totalTokens > 0 ? usage.tokens / totalTokens : 0;
+        const cost = stats.totalReportedCost! * proportion;
+
+        this._state.modelBreakdown.push({
+          model,
+          calls: usage.calls,
+          tokens: usage.tokens,
+          cost
+        });
+
+        this._state.totalCost += cost;
       });
+    } else {
+      stats.modelUsage.forEach((usage, model) => {
+        const pricing = ModelPricingService.getPricing(model);
+        const cost = ModelPricingService.calculateCost({
+          inputTokens: usage.inputTokens,
+          outputTokens: usage.outputTokens,
+          cacheWriteTokens: usage.cacheWriteTokens,
+          cacheReadTokens: usage.cacheReadTokens,
+        }, pricing);
 
-      this._state.totalCost += cost;
-    });
+        this._state.modelBreakdown.push({
+          model,
+          calls: usage.calls,
+          tokens: usage.tokens,
+          cost
+        });
+
+        this._state.totalCost += cost;
+      });
+    }
 
     // Calculate context window usage (uses _currentContextSize synced above)
     this._updateContextUsage();
@@ -1380,6 +1418,17 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
   }
 
   /**
+   * Public method to refresh session-related panels and provider info.
+   */
+  refreshSessionView(): void {
+    this._syncFromSessionMonitor();
+    this._sendStateToWebview();
+    this._sendBurnRateUpdate();
+    this._sendSessionList();
+    this._sendProviderInfo();
+  }
+
+  /**
    * Sends burn rate and session timing update to the webview.
    */
   private _sendBurnRateUpdate(): void {
@@ -1403,6 +1452,18 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
       isPinned: this._sessionMonitor.isPinned(),
       isUsingCustomPath: this._sessionMonitor.isUsingCustomPath(),
       customPathDisplay: customPath ? this._getShortPath(customPath) : null
+    });
+  }
+
+  /**
+   * Sends the current session provider info to the webview.
+   */
+  private _sendProviderInfo(): void {
+    const provider = this._sessionMonitor.getProvider();
+    this._postMessage({
+      type: 'updateSessionProvider',
+      providerId: provider.id,
+      displayName: provider.displayName
     });
   }
 
@@ -1433,13 +1494,21 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
   }
 
   /**
+   * Gets the context window limit from the session provider.
+   */
+  private _getContextWindowLimit(): number {
+    const provider = this._sessionMonitor.getProvider();
+    return provider.getContextWindowLimit?.(this._lastModelId) ?? 200_000;
+  }
+
+  /**
    * Updates context window usage percentage.
    * Uses the actual context size from the most recent message, not cumulative tokens.
    */
   private _updateContextUsage(): void {
     // Context window = actual tokens in context from most recent message
     // This is input + cache_write + cache_read tokens
-    this._state.contextUsagePercent = (this._currentContextSize / this.CONTEXT_WINDOW_LIMIT) * 100;
+    this._state.contextUsagePercent = (this._currentContextSize / this._getContextWindowLimit()) * 100;
   }
 
   /**
@@ -1470,6 +1539,7 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
     const initialIsPinned = this._sessionMonitor.isPinned();
     const initialCustomPath = this._sessionMonitor.getCustomPath();
     const initialIsUsingCustomPath = this._sessionMonitor.isUsingCustomPath();
+    const initialProvider = this._sessionMonitor.getProvider();
 
     return `<!DOCTYPE html>
 <html lang="en">
@@ -2994,6 +3064,32 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
       gap: 4px;
     }
 
+    .session-provider {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding-right: 4px;
+    }
+
+    .session-provider label {
+      font-size: 10px;
+      color: var(--vscode-descriptionForeground);
+    }
+
+    .session-provider select {
+      font-size: 10px;
+      background: var(--vscode-dropdown-background);
+      color: var(--vscode-dropdown-foreground);
+      border: 1px solid var(--vscode-dropdown-border, transparent);
+      border-radius: 3px;
+      padding: 2px 6px;
+      outline: none;
+    }
+
+    .session-provider select:focus {
+      border-color: var(--vscode-focusBorder);
+    }
+
     .session-nav-actions .nav-btn,
     .session-nav-actions .pin-btn {
       padding: 2px 6px;
@@ -3401,9 +3497,16 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
         <span class="session-nav-title">Sessions</span>
       </div>
       <div class="session-nav-actions">
+        <div class="session-provider">
+          <label for="session-provider-select">Provider</label>
+          <select id="session-provider-select">
+            <option value="claude-code">Claude Code</option>
+            <option value="opencode">OpenCode</option>
+          </select>
+        </div>
         <button class="pin-btn" id="pin-session" title="Pin session to prevent auto-switching">Pin</button>
         <button class="nav-btn" id="refresh-sessions" title="Refresh session list">↻</button>
-        <button class="nav-btn browse" id="browse-folders" title="Browse all Claude session folders">Browse...</button>
+        <button class="nav-btn browse" id="browse-folders" title="Browse session folders">Browse...</button>
       </div>
     </div>
     <div class="session-list" id="session-list">
@@ -3420,8 +3523,8 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
   <div id="session-tab" class="tab-content active">
     <div id="content">
       <div class="empty-state">
-        <p>No active Claude Code session detected.</p>
-        <p>Start a session to see analytics.</p>
+        <p id="empty-state-title">No active session detected.</p>
+        <p id="empty-state-hint">Start a session to see analytics.</p>
       </div>
     </div>
 
@@ -3826,7 +3929,9 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
       groups: initialGroups,
       isPinned: initialIsPinned,
       isUsingCustomPath: initialIsUsingCustomPath,
-      customPathDisplay: initialCustomPath ? this._getShortPath(initialCustomPath) : null
+      customPathDisplay: initialCustomPath ? this._getShortPath(initialCustomPath) : null,
+      providerId: initialProvider.id,
+      providerName: initialProvider.displayName
     })};
   </script>
   <script nonce="${nonce}">
@@ -3854,9 +3959,12 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
       const pinSessionBtn = document.getElementById('pin-session');
       const refreshSessionsBtn = document.getElementById('refresh-sessions');
       const browseFoldersBtn = document.getElementById('browse-folders');
+      const sessionProviderSelect = document.getElementById('session-provider-select');
       const customPathIndicator = document.getElementById('custom-path-indicator');
       const customPathText = document.getElementById('custom-path-text');
       const resetCustomPath = document.getElementById('reset-custom-path');
+      const emptyStateTitle = document.getElementById('empty-state-title');
+      const emptyStateHint = document.getElementById('empty-state-hint');
 
       // Tab elements
       const tabBtns = document.querySelectorAll('.tab-btn');
@@ -3901,6 +4009,9 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
         burnRate: 0,
         sessionDuration: '0m'
       };
+
+      let currentProviderId = 'claude-code';
+      let currentProviderName = 'Claude Code';
 
       // Suggestions state
       let currentSuggestions = [];
@@ -4897,6 +5008,23 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
         return div.innerHTML;
       }
 
+      function updateProviderDisplay(providerId, providerName) {
+        if (!providerId || !providerName) return;
+        currentProviderId = providerId;
+        currentProviderName = providerName;
+
+        if (sessionProviderSelect) {
+          sessionProviderSelect.value = providerId;
+        }
+
+        if (emptyStateTitle) {
+          emptyStateTitle.textContent = 'No active ' + providerName + ' session detected.';
+        }
+        if (emptyStateHint) {
+          emptyStateHint.textContent = 'Start a ' + providerName + ' session to see analytics.';
+        }
+      }
+
       /**
        * Updates the session card navigator.
        */
@@ -5157,6 +5285,10 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
             updateSessionList(message.groups, message.isPinned, message.isUsingCustomPath, message.customPathDisplay);
             break;
 
+          case 'updateSessionProvider':
+            updateProviderDisplay(message.providerId, message.displayName);
+            break;
+
           case 'updateHistoricalData':
             if (historyLoading) historyLoading.style.display = 'none';
             updateHistoryChart(message.data);
@@ -5318,6 +5450,15 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
         refreshSessionsBtn.addEventListener('click', function(e) {
           e.stopPropagation();
           vscode.postMessage({ type: 'refreshSessions' });
+        });
+      }
+
+      if (sessionProviderSelect) {
+        sessionProviderSelect.addEventListener('change', function() {
+          var nextProvider = sessionProviderSelect.value;
+          if (nextProvider && nextProvider !== currentProviderId) {
+            vscode.postMessage({ type: 'setSessionProvider', providerId: nextProvider });
+          }
         });
       }
 
@@ -5632,6 +5773,9 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
         try {
           var init = window.__initialSessionData;
           updateSessionList(init.groups, init.isPinned, init.isUsingCustomPath, init.customPathDisplay);
+          if (init.providerId && init.providerName) {
+            updateProviderDisplay(init.providerId, init.providerName);
+          }
         } catch (e) {
           var errEl = document.getElementById('session-list');
           if (errEl) errEl.innerHTML = '<div class="session-list-empty">Init error: ' + e.message + '</div>';
@@ -5657,4 +5801,3 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
     log('DashboardViewProvider disposed');
   }
 }
-

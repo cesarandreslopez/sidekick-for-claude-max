@@ -30,6 +30,7 @@ import { PreCommitReviewService } from "./services/PreCommitReviewService";
 import { PrDescriptionService } from "./services/PrDescriptionService";
 import { getTimeoutManager } from "./services/TimeoutManager";
 import { SessionMonitor } from './services/SessionMonitor';
+import { detectProvider } from './services/providers/ProviderDetector';
 import { SessionFolderPicker } from './services/SessionFolderPicker';
 import { MonitorStatusBar } from './services/MonitorStatusBar';
 import { QuotaService } from './services/QuotaService';
@@ -191,7 +192,9 @@ export async function activate(context: vscode.ExtensionContext) {
   const enableMonitoring = monitoringConfig.get<boolean>('enableSessionMonitoring') ?? true;
 
   if (enableMonitoring) {
-    sessionMonitor = new SessionMonitor(context.workspaceState);
+    const sessionProvider = detectProvider();
+    context.subscriptions.push(sessionProvider);
+    sessionMonitor = new SessionMonitor(sessionProvider, context.workspaceState);
     context.subscriptions.push(sessionMonitor);
 
     // Create session folder picker
@@ -308,10 +311,12 @@ export async function activate(context: vscode.ExtensionContext) {
       }
     });
 
-    // Create quota service for subscription limits
-    quotaService = new QuotaService();
-    context.subscriptions.push(quotaService);
-    log('QuotaService initialized');
+    // Create quota service for subscription limits (only for Claude Code provider)
+    if (sessionProvider.id === 'claude-code') {
+      quotaService = new QuotaService();
+      context.subscriptions.push(quotaService);
+      log('QuotaService initialized');
+    }
 
     // Create SessionAnalyzer and ClaudeMdAdvisor for CLAUDE.md suggestions
     const sessionAnalyzer = new SessionAnalyzer(sessionMonitor);
@@ -529,7 +534,9 @@ export async function activate(context: vscode.ExtensionContext) {
       sessionMonitor.dispose();
 
       // Reinitialize for potential future use
-      sessionMonitor = new SessionMonitor(context.workspaceState);
+      const newProvider = detectProvider();
+      context.subscriptions.push(newProvider);
+      sessionMonitor = new SessionMonitor(newProvider, context.workspaceState);
 
       vscode.window.showInformationMessage('Session monitoring stopped');
       log('Session monitoring stopped by user');
@@ -551,6 +558,42 @@ export async function activate(context: vscode.ExtensionContext) {
       } else {
         vscode.window.showInformationMessage('No active session found. Still searching...');
       }
+    })
+  );
+
+  // Register session provider switch command
+  context.subscriptions.push(
+    vscode.commands.registerCommand('sidekick.setSessionProvider', async (providerId: string) => {
+      if (!sessionMonitor) {
+        vscode.window.showErrorMessage('Session monitor not initialized');
+        return;
+      }
+
+      if (providerId !== 'claude-code' && providerId !== 'opencode') {
+        vscode.window.showErrorMessage(`Unknown session provider: ${providerId}`);
+        return;
+      }
+
+      const currentProviderId = sessionMonitor.getProvider().id;
+      if (currentProviderId === providerId) {
+        return;
+      }
+
+      const config = vscode.workspace.getConfiguration('sidekick');
+      const target = vscode.workspace.workspaceFolders?.length
+        ? vscode.ConfigurationTarget.Workspace
+        : vscode.ConfigurationTarget.Global;
+      await config.update('sessionProvider', providerId, target);
+
+      const newProvider = detectProvider();
+      context.subscriptions.push(newProvider);
+
+      const switched = await sessionMonitor.switchProvider(newProvider);
+      if (!switched) {
+        log(`Switched session provider to ${providerId}, no active session found yet`);
+      }
+
+      dashboardProvider?.refreshSessionView();
     })
   );
 

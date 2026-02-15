@@ -126,7 +126,9 @@ export class MonitorStatusBar implements vscode.Disposable {
 
     // Calculate context % using actual context size from most recent message
     const stats = this.monitor.getStats();
-    this.contextPercent = Math.round((stats.currentContextSize / 200000) * 100);
+    const provider = this.monitor.getProvider();
+    const contextLimit = provider.getContextWindowLimit?.(undefined) ?? 200_000;
+    this.contextPercent = Math.round((stats.currentContextSize / contextLimit) * 100);
 
     this.updateDisplay();
   }
@@ -155,10 +157,12 @@ export class MonitorStatusBar implements vscode.Disposable {
 
     // Build detailed tooltip
     const stats = this.monitor.getStats();
+    const provider = this.monitor.getProvider();
+    const contextLimit = provider.getContextWindowLimit?.(undefined) ?? 200_000;
     this.statusBarItem.tooltip = [
-      'Claude Code Session',
+      `${provider.displayName} Session`,
       `Tokens: ${this.totalTokens.toLocaleString()} (${stats.totalInputTokens.toLocaleString()} in + ${stats.totalOutputTokens.toLocaleString()} out)`,
-      `Context: ${this.contextPercent}% of 200K`,
+      `Context: ${this.contextPercent}% of ${this.formatTokenCount(contextLimit)}`,
       'Click to open dashboard'
     ].join('\n');
   }
@@ -168,7 +172,7 @@ export class MonitorStatusBar implements vscode.Disposable {
    */
   private updateNoSession(): void {
     this.statusBarItem.text = '$(pulse) --';
-    this.statusBarItem.tooltip = 'No Claude Code session';
+    this.statusBarItem.tooltip = 'No active session';
     this.statusBarItem.backgroundColor = undefined;
   }
 
