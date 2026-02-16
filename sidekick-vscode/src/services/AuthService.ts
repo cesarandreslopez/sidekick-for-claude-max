@@ -158,21 +158,22 @@ export class AuthService implements vscode.Disposable {
           success: true,
           message: `Connected successfully using ${this.mode} authentication.`,
         };
-      } else {
-        if (this.mode === 'max-subscription') {
-          return {
-            success: false,
-            message:
-              'Claude Code CLI not found. Install it with: npm install -g @anthropic-ai/claude-code\n\n' +
-              'If already installed (e.g., via pnpm), set the path in Settings > Sidekick > Claude Path.\n' +
-              'Find your claude path with: which claude (Linux/Mac) or where claude (Windows)',
-          };
-        }
+      }
+
+      if (this.mode === 'max-subscription') {
         return {
           success: false,
-          message: 'API key authentication failed. Please check your API key.',
+          message:
+            'Claude Code CLI not found. Install it with: npm install -g @anthropic-ai/claude-code\n\n' +
+            'If already installed (e.g., via pnpm), set the path in Settings > Sidekick > Claude Path.\n' +
+            'Find your claude path with: which claude (Linux/Mac) or where claude (Windows)',
         };
       }
+
+      return {
+        success: false,
+        message: 'API key authentication failed. Please check your API key.',
+      };
     } catch (error) {
       const message =
         error instanceof Error ? error.message : 'Unknown error';

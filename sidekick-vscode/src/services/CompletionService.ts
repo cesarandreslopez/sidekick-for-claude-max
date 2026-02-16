@@ -15,7 +15,7 @@ import * as vscode from 'vscode';
 import { AuthService } from './AuthService';
 import { CompletionCache } from './CompletionCache';
 import { CompletionContext, TimeoutError } from '../types';
-import { getSystemPrompt, getUserPrompt, cleanCompletion } from '../utils/prompts';
+import { getSystemPrompt, getUserPrompt, cleanCompletion, PROSE_LANGUAGES } from '../utils/prompts';
 import { log } from './Logger';
 
 /**
@@ -82,9 +82,8 @@ export class CompletionService implements vscode.Disposable {
     const timeoutMs = config.get<number>('inlineTimeout') ?? 15000;
 
     // Prose files always use multiline mode
-    const proseLanguages = ['markdown', 'md', 'plaintext', 'text', 'txt', 'restructuredtext', 'asciidoc', 'latex', 'tex', 'html', 'xml'];
-    const isProse = proseLanguages.includes(document.languageId.toLowerCase());
-    const multiline = isProse ? true : multilineSetting;
+    const isProse = PROSE_LANGUAGES.includes(document.languageId.toLowerCase());
+    const multiline = isProse || multilineSetting;
 
     // Increment request ID for tracking
     const requestId = ++this.lastRequestId;

@@ -46,6 +46,29 @@ const TOOL_COST_WEIGHTS: Record<string, number> = {
 const DEFAULT_TOOL_WEIGHT = 1;
 
 /**
+ * Computes a task's duration based on its status.
+ *
+ * - Completed: time between creation and last update
+ * - In progress: time from creation until now
+ * - Other (pending/deleted): 0
+ */
+function computeTaskDuration(
+  status: string,
+  createdAt: Date,
+  updatedAt: Date,
+  now: number
+): number {
+  switch (status) {
+    case 'completed':
+      return updatedAt.getTime() - createdAt.getTime();
+    case 'in_progress':
+      return now - createdAt.getTime();
+    default:
+      return 0;
+  }
+}
+
+/**
  * Service that aggregates session data into summary and panel formats.
  */
 export class SessionSummaryService {
@@ -125,11 +148,7 @@ export class SessionSummaryService {
         taskId: t.taskId,
         subject: t.subject,
         status: t.status,
-        duration: t.status === 'completed'
-          ? t.updatedAt.getTime() - t.createdAt.getTime()
-          : t.status === 'in_progress'
-            ? now - t.createdAt.getTime()
-            : 0,
+        duration: computeTaskDuration(t.status, t.createdAt, t.updatedAt, now),
         toolCallCount: t.associatedToolCalls.length,
         blockedBy: [...t.blockedBy],
         blocks: [...t.blocks],
@@ -326,11 +345,7 @@ export class SessionSummaryService {
     return Array.from(taskState.tasks.values())
       .filter(t => t.status !== 'deleted')
       .map(t => {
-        const duration = t.status === 'completed'
-          ? t.updatedAt.getTime() - t.createdAt.getTime()
-          : t.status === 'in_progress'
-            ? now - t.createdAt.getTime()
-            : 0;
+        const duration = computeTaskDuration(t.status, t.createdAt, t.updatedAt, now);
         const toolCallCount = t.associatedToolCalls.length;
         const costShare = totalToolCalls > 0 ? toolCallCount / totalToolCalls : 0;
 

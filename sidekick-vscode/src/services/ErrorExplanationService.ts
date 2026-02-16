@@ -171,37 +171,20 @@ export class ErrorExplanationService {
    * @returns Structured ErrorExplanation object
    */
   private parseExplanation(response: string): ErrorExplanation {
-    // Default structure in case parsing fails
-    const explanation: ErrorExplanation = {
-      rootCause: '',
-      whyItHappens: '',
-      suggestedFix: '',
-    };
-
     // Try to split by section headers
-    const rootCauseMatch = response.match(/ROOT CAUSE[:\s]+(.*?)(?=WHY IT HAPPENS|HOW TO FIX|$)/is);
-    const whyItHappensMatch = response.match(/WHY IT HAPPENS[:\s]+(.*?)(?=ROOT CAUSE|HOW TO FIX|$)/is);
-    const howToFixMatch = response.match(/HOW TO FIX[:\s]+(.*?)(?=ROOT CAUSE|WHY IT HAPPENS|$)/is);
-
-    if (rootCauseMatch) {
-      explanation.rootCause = rootCauseMatch[1].trim();
-    }
-
-    if (whyItHappensMatch) {
-      explanation.whyItHappens = whyItHappensMatch[1].trim();
-    }
-
-    if (howToFixMatch) {
-      explanation.suggestedFix = howToFixMatch[1].trim();
-    }
+    const rootCause = response.match(/ROOT CAUSE[:\s]+(.*?)(?=WHY IT HAPPENS|HOW TO FIX|$)/is)?.[1]?.trim() ?? '';
+    const whyItHappens = response.match(/WHY IT HAPPENS[:\s]+(.*?)(?=ROOT CAUSE|HOW TO FIX|$)/is)?.[1]?.trim() ?? '';
+    const suggestedFix = response.match(/HOW TO FIX[:\s]+(.*?)(?=ROOT CAUSE|WHY IT HAPPENS|$)/is)?.[1]?.trim() ?? '';
 
     // If no sections found, treat entire response as root cause
-    if (!explanation.rootCause && !explanation.whyItHappens && !explanation.suggestedFix) {
-      explanation.rootCause = response.trim();
-      explanation.whyItHappens = 'See explanation above.';
-      explanation.suggestedFix = 'See explanation above.';
+    if (!rootCause && !whyItHappens && !suggestedFix) {
+      return {
+        rootCause: response.trim(),
+        whyItHappens: 'See explanation above.',
+        suggestedFix: 'See explanation above.',
+      };
     }
 
-    return explanation;
+    return { rootCause, whyItHappens, suggestedFix };
   }
 }

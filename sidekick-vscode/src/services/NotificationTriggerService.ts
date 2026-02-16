@@ -324,11 +324,10 @@ export class NotificationTriggerService implements vscode.Disposable {
   }
 
   dispose(): void {
-    for (const d of this.disposables) {
-      d.dispose();
-    }
+    this.disposables.forEach(d => d.dispose());
     this.disposables = [];
     this.lastFiredAt.clear();
+    this.compiledPatterns.clear();
     log('NotificationTriggerService disposed');
   }
 }

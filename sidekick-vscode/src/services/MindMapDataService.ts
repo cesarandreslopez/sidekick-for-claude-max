@@ -436,140 +436,84 @@ export class MindMapDataService {
   }
 
   /**
-   * Creates links between files and the tools that touched them.
+   * Creates unique links between tool nodes and target nodes.
+   *
+   * Generic helper that iterates tool calls matching the given tool names,
+   * extracts a target node ID via the provided function, and adds unique
+   * tool-to-target links.
    *
    * @param toolCalls - Array of tool calls from session
+   * @param toolNames - Tool names to match
+   * @param getTargetId - Function to extract target node ID from a tool call (or null to skip)
    * @param existingNodeIds - Set of existing node IDs
    * @param links - Links array to add to
    */
-  private static addFileToolLinks(
+  private static addToolTargetLinks(
     toolCalls: ToolCall[],
+    toolNames: string[],
+    getTargetId: (call: ToolCall) => string | null,
     existingNodeIds: Set<string>,
     links: GraphLink[]
   ): void {
     const addedLinks = new Set<string>();
 
     for (const call of toolCalls) {
-      if (this.FILE_TOOLS.includes(call.name)) {
-        const filePath = call.input.file_path as string;
-        if (filePath && typeof filePath === 'string') {
-          const fileId = `file-${filePath}`;
-          const toolId = `tool-${call.name}`;
+      if (!toolNames.includes(call.name)) continue;
 
-          if (existingNodeIds.has(fileId) && existingNodeIds.has(toolId)) {
-            // Only add unique links (tool → file direction)
-            const linkKey = `${toolId}-${fileId}`;
-            if (!addedLinks.has(linkKey)) {
-              links.push({ source: toolId, target: fileId });
-              addedLinks.add(linkKey);
-            }
-          }
-        }
+      const targetId = getTargetId(call);
+      if (!targetId) continue;
+
+      const toolId = `tool-${call.name}`;
+      if (!existingNodeIds.has(targetId) || !existingNodeIds.has(toolId)) continue;
+
+      const linkKey = `${toolId}-${targetId}`;
+      if (!addedLinks.has(linkKey)) {
+        links.push({ source: toolId, target: targetId });
+        addedLinks.add(linkKey);
       }
     }
+  }
+
+  /**
+   * Creates links between files and the tools that touched them.
+   */
+  private static addFileToolLinks(toolCalls: ToolCall[], existingNodeIds: Set<string>, links: GraphLink[]): void {
+    this.addToolTargetLinks(toolCalls, this.FILE_TOOLS, call => {
+      const filePath = call.input.file_path as string;
+      return filePath && typeof filePath === 'string' ? `file-${filePath}` : null;
+    }, existingNodeIds, links);
   }
 
   /**
    * Creates links between URLs/queries and the tools that accessed them.
-   *
-   * @param toolCalls - Array of tool calls from session
-   * @param existingNodeIds - Set of existing node IDs
-   * @param links - Links array to add to
    */
-  private static addUrlToolLinks(
-    toolCalls: ToolCall[],
-    existingNodeIds: Set<string>,
-    links: GraphLink[]
-  ): void {
-    const addedLinks = new Set<string>();
-
-    for (const call of toolCalls) {
-      if (this.URL_TOOLS.includes(call.name)) {
-        const url = (call.input.url as string) || (call.input.query as string);
-        if (url && typeof url === 'string') {
-          const urlId = `url-${url}`;
-          const toolId = `tool-${call.name}`;
-
-          if (existingNodeIds.has(urlId) && existingNodeIds.has(toolId)) {
-            const linkKey = `${toolId}-${urlId}`;
-            if (!addedLinks.has(linkKey)) {
-              links.push({ source: toolId, target: urlId });
-              addedLinks.add(linkKey);
-            }
-          }
-        }
-      }
-    }
+  private static addUrlToolLinks(toolCalls: ToolCall[], existingNodeIds: Set<string>, links: GraphLink[]): void {
+    this.addToolTargetLinks(toolCalls, this.URL_TOOLS, call => {
+      const url = (call.input.url as string) || (call.input.query as string);
+      return url && typeof url === 'string' ? `url-${url}` : null;
+    }, existingNodeIds, links);
   }
 
   /**
    * Creates links between directories and the tools that searched them.
-   *
-   * @param toolCalls - Array of tool calls from session
-   * @param existingNodeIds - Set of existing node IDs
-   * @param links - Links array to add to
    */
-  private static addDirectoryToolLinks(
-    toolCalls: ToolCall[],
-    existingNodeIds: Set<string>,
-    links: GraphLink[]
-  ): void {
-    const addedLinks = new Set<string>();
-
-    for (const call of toolCalls) {
-      if (this.SEARCH_TOOLS.includes(call.name)) {
-        const path = call.input.path as string;
-        if (path && typeof path === 'string') {
-          const dirId = `directory-${path}`;
-          const toolId = `tool-${call.name}`;
-
-          if (existingNodeIds.has(dirId) && existingNodeIds.has(toolId)) {
-            const linkKey = `${toolId}-${dirId}`;
-            if (!addedLinks.has(linkKey)) {
-              links.push({ source: toolId, target: dirId });
-              addedLinks.add(linkKey);
-            }
-          }
-        }
-      }
-    }
+  private static addDirectoryToolLinks(toolCalls: ToolCall[], existingNodeIds: Set<string>, links: GraphLink[]): void {
+    this.addToolTargetLinks(toolCalls, this.SEARCH_TOOLS, call => {
+      const dirPath = call.input.path as string;
+      return dirPath && typeof dirPath === 'string' ? `directory-${dirPath}` : null;
+    }, existingNodeIds, links);
   }
 
   /**
    * Creates links between command types and the Bash tool that ran them.
-   *
-   * @param toolCalls - Array of tool calls from session
-   * @param existingNodeIds - Set of existing node IDs
-   * @param links - Links array to add to
    */
-  private static addCommandToolLinks(
-    toolCalls: ToolCall[],
-    existingNodeIds: Set<string>,
-    links: GraphLink[]
-  ): void {
-    const addedLinks = new Set<string>();
-
-    for (const call of toolCalls) {
-      if (this.SHELL_TOOLS.includes(call.name)) {
-        const cmd = call.input.command as string;
-        if (cmd && typeof cmd === 'string') {
-          const match = cmd.match(this.COMMAND_PATTERNS);
-          if (match) {
-            const cmdName = match[1].toLowerCase();
-            const cmdId = `command-${cmdName}`;
-            const toolId = `tool-${call.name}`;
-
-            if (existingNodeIds.has(cmdId) && existingNodeIds.has(toolId)) {
-              const linkKey = `${toolId}-${cmdId}`;
-              if (!addedLinks.has(linkKey)) {
-                links.push({ source: toolId, target: cmdId });
-                addedLinks.add(linkKey);
-              }
-            }
-          }
-        }
-      }
-    }
+  private static addCommandToolLinks(toolCalls: ToolCall[], existingNodeIds: Set<string>, links: GraphLink[]): void {
+    this.addToolTargetLinks(toolCalls, this.SHELL_TOOLS, call => {
+      const cmd = call.input.command as string;
+      if (!cmd || typeof cmd !== 'string') return null;
+      const match = cmd.match(this.COMMAND_PATTERNS);
+      return match ? `command-${match[1].toLowerCase()}` : null;
+    }, existingNodeIds, links);
   }
 
   /**

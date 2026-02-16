@@ -753,23 +753,7 @@ export class SessionMonitor implements vscode.Disposable {
     this.previousContextSize = 0;
 
     // Reset statistics
-    this.stats = {
-      totalInputTokens: 0,
-      totalOutputTokens: 0,
-      totalCacheWriteTokens: 0,
-      totalCacheReadTokens: 0,
-      messageCount: 0,
-      toolCalls: [],
-      modelUsage: new Map(),
-      lastUpdated: new Date(),
-      toolAnalytics: new Map(),
-      timeline: [],
-      errorDetails: new Map(),
-      currentContextSize: 0,
-      lastModelId: undefined,
-      recentUsageEvents: [],
-      sessionStartTime: null
-    };
+    this.stats = this.createEmptyStats();
 
     const usageSnapshot = this.provider.getCurrentUsageSnapshot?.(sessionPath);
     if (usageSnapshot) {

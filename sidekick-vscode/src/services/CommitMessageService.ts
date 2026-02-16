@@ -205,35 +205,24 @@ export class CommitMessageService implements vscode.Disposable {
       logError('CommitMessageService: Generation failed', error);
 
       // Distinguish error types for better user feedback
-      if (error instanceof Anthropic.RateLimitError) {
-        return {
-          message: null,
-          error: 'API rate limit exceeded. Please try again in a moment.',
-        };
-      } else if (error instanceof Anthropic.AuthenticationError) {
-        return {
-          message: null,
-          error: 'Authentication failed. Check your API key or Claude Code CLI setup.',
-        };
-      } else if (error instanceof Anthropic.InternalServerError) {
-        return {
-          message: null,
-          error: 'Claude API is experiencing issues. Please try again.',
-        };
-      } else if (error instanceof Error) {
-        if (error.name === 'AbortError') {
-          return { message: null }; // User cancelled
-        }
-        return {
-          message: null,
-          error: error.message,
-        };
+      if (error instanceof Error && error.name === 'AbortError') {
+        return { message: null };
       }
 
-      return {
-        message: null,
-        error: 'An unexpected error occurred.',
-      };
+      let errorMessage: string;
+      if (error instanceof Anthropic.RateLimitError) {
+        errorMessage = 'API rate limit exceeded. Please try again in a moment.';
+      } else if (error instanceof Anthropic.AuthenticationError) {
+        errorMessage = 'Authentication failed. Check your API key or Claude Code CLI setup.';
+      } else if (error instanceof Anthropic.InternalServerError) {
+        errorMessage = 'Claude API is experiencing issues. Please try again.';
+      } else if (error instanceof Error) {
+        errorMessage = error.message;
+      } else {
+        errorMessage = 'An unexpected error occurred.';
+      }
+
+      return { message: null, error: errorMessage };
     }
   }
 

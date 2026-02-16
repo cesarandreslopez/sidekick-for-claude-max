@@ -293,7 +293,7 @@ export class ConversationViewProvider implements vscode.Disposable {
           ${modelTag}
           <span class="chunk-time">${time}</span>
         </div>
-        <div class="chunk-body">${this.formatContent(chunk.content)}</div>
+        <div class="chunk-body">${this.escapeHtml(chunk.content)}</div>
       </div>`;
     }).join('\n');
 
@@ -577,13 +577,6 @@ export class ConversationViewProvider implements vscode.Disposable {
       .replace(/</g, '&lt;')
       .replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;');
-  }
-
-  /**
-   * Formats content text, preserving whitespace and escaping HTML.
-   */
-  private formatContent(text: string): string {
-    return this.escapeHtml(text);
   }
 
   /**

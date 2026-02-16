@@ -195,15 +195,9 @@ export class MonitorStatusBar implements vscode.Disposable {
    * @returns Formatted string (e.g., "12.5K", "1.2M")
    */
   private formatTokenCount(tokens: number): string {
-    if (tokens === 0) {
-      return '0';
-    } else if (tokens < 1000) {
-      return tokens.toString();
-    } else if (tokens < 1_000_000) {
-      return `${(tokens / 1000).toFixed(1)}K`;
-    } else {
-      return `${(tokens / 1_000_000).toFixed(1)}M`;
-    }
+    if (tokens >= 1_000_000) return `${(tokens / 1_000_000).toFixed(1)}M`;
+    if (tokens >= 1000) return `${(tokens / 1000).toFixed(1)}K`;
+    return tokens.toString();
   }
 
   /**

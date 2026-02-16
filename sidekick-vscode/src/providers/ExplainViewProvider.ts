@@ -210,7 +210,6 @@ export class ExplainViewProvider implements vscode.Disposable {
     this.pendingRequests.set(requestId, { timestamp: Date.now() });
 
     try {
-      // Call ExplanationService with 'code' as content type
       const explanation = await this.explanationService.explain(
         code,
         'code',
@@ -218,26 +217,24 @@ export class ExplainViewProvider implements vscode.Disposable {
         fileContext
       );
 
-      // Only send if request still pending (not cancelled by newer request)
       if (this.pendingRequests.has(requestId)) {
         this._panel?.webview.postMessage({
           type: 'explanationResult',
           requestId,
           explanation
         } as ExplainExtensionMessage);
-        this.pendingRequests.delete(requestId);
       }
     } catch (error) {
-      // Send error to webview if request still pending
       if (this.pendingRequests.has(requestId)) {
         this._panel?.webview.postMessage({
           type: 'explanationError',
           requestId,
           error: error instanceof Error ? error.message : 'Explanation failed'
         } as ExplainExtensionMessage);
-        this.pendingRequests.delete(requestId);
       }
       console.error('Explanation error:', error);
+    } finally {
+      this.pendingRequests.delete(requestId);
     }
   }
 
