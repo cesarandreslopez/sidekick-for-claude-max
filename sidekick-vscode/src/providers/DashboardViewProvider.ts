@@ -107,6 +107,9 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
   /** Debounce timer for richer panel updates */
   private _richerPanelTimer?: ReturnType<typeof setTimeout>;
 
+  /** Suppresses session list updates during provider switches */
+  private _suppressSessionListUpdates = false;
+
   /**
    * Creates a new DashboardViewProvider.
    *
@@ -290,7 +293,7 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
 
       case 'setSessionProvider':
         log(`Dashboard: user selected session provider: ${message.providerId}`);
-        this._postMessage({ type: 'sessionsLoading', loading: true });
+        this._suppressSessionListUpdates = true;
         vscode.commands.executeCommand('sidekick.setSessionProvider', message.providerId);
         break;
 
@@ -1126,7 +1129,6 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
       type: 'discoveryModeChange',
       inDiscoveryMode
     });
-    // Also refresh session list when entering/exiting discovery mode
     this._sendSessionList();
   }
 
@@ -1448,6 +1450,7 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
    * Public method to refresh session-related panels and provider info.
    */
   refreshSessionView(): void {
+    this._suppressSessionListUpdates = false;
     // Reset timeline and tool analytics for the new provider/session
     this._timeline = [];
     this._toolAnalytics.clear();
@@ -1480,6 +1483,13 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
    * Sends the list of available sessions to the webview.
    */
   private _sendSessionList(): void {
+    if (this._suppressSessionListUpdates) {
+      return;
+    }
+    if (this._sessionMonitor.isInDiscoveryMode()) {
+      this._postMessage({ type: 'sessionsLoading', loading: true });
+      return;
+    }
     const groups = this._sessionMonitor.getAllSessionsGrouped();
     const customPath = this._sessionMonitor.getCustomPath();
     this._postMessage({
