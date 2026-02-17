@@ -39,6 +39,7 @@ import { RetroactiveDataLoader } from './services/RetroactiveDataLoader';
 import { SessionAnalyzer } from './services/SessionAnalyzer';
 import { ClaudeMdAdvisor } from './services/ClaudeMdAdvisor';
 import { NotificationTriggerService } from './services/NotificationTriggerService';
+import { SessionEventLogger } from './services/SessionEventLogger';
 import { ConversationViewProvider } from './providers/ConversationViewProvider';
 import { CrossSessionSearch } from './services/CrossSessionSearch';
 import { ToolInspectorProvider } from './providers/ToolInspectorProvider';
@@ -314,6 +315,20 @@ export async function activate(context: vscode.ExtensionContext) {
       log('QuotaService initialized');
     }
 
+    // Initialize session event logger for JSONL audit trail
+    const eventLogger = new SessionEventLogger();
+    eventLogger.initialize().then(() => {
+      log('SessionEventLogger initialized');
+    }).catch(error => {
+      logError('Failed to initialize SessionEventLogger', error);
+    });
+    context.subscriptions.push(eventLogger);
+
+    const config = vscode.workspace.getConfiguration('sidekick');
+    if (config.get<boolean>('enableEventLog')) {
+      sessionMonitor.setEventLogger(eventLogger);
+    }
+
     // Create SessionAnalyzer and ClaudeMdAdvisor for CLAUDE.md suggestions
     const sessionAnalyzer = new SessionAnalyzer(sessionMonitor);
     const claudeMdAdvisor = new ClaudeMdAdvisor(authService, sessionAnalyzer);
@@ -321,6 +336,7 @@ export async function activate(context: vscode.ExtensionContext) {
 
     // Register dashboard view provider (depends on sessionMonitor, quotaService, historicalDataService, and claudeMdAdvisor)
     dashboardProvider = new DashboardViewProvider(context.extensionUri, sessionMonitor, quotaService, historicalDataService, claudeMdAdvisor, sessionAnalyzer, authService);
+    dashboardProvider.setEventLogger(eventLogger);
     context.subscriptions.push(dashboardProvider);
     context.subscriptions.push(
       vscode.window.registerWebviewViewProvider(DashboardViewProvider.viewType, dashboardProvider)
@@ -1243,7 +1259,7 @@ export async function activate(context: vscode.ExtensionContext) {
         cancellable: false,
       },
       async () => {
-        await explainProvider!.showExplanation(
+        explainProvider!.showExplanation(
           selectedText,
           complexity,
           { fileName, languageId }

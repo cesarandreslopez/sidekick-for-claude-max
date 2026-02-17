@@ -111,7 +111,8 @@ export type DashboardMessage =
   | { type: 'updateContextAttribution'; attribution: ContextAttributionDisplay[] }
   | { type: 'sessionsLoading'; loading: boolean }
   | { type: 'notification'; title: string; body: string; severity: 'info' | 'warning' | 'error' }
-  | { type: 'toolCallDetails'; toolName: string; calls: ToolCallDetailDisplay[] };
+  | { type: 'toolCallDetails'; toolName: string; calls: ToolCallDetailDisplay[] }
+  | { type: 'syncEventLogState'; enabled: boolean };
 
 /**
  * Messages from webview to extension.
@@ -138,7 +139,8 @@ export type DashboardWebviewMessage =
   | { type: 'requestSessionSummary' }
   | { type: 'searchTimeline'; query: string }
   | { type: 'setTimelineFilter'; filters: TimelineFilterState }
-  | { type: 'requestToolCallDetails'; toolName: string };
+  | { type: 'requestToolCallDetails'; toolName: string }
+  | { type: 'toggleEventLog'; enabled: boolean };
 
 /**
  * Model usage breakdown entry.

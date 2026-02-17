@@ -431,6 +431,21 @@
           "type": "boolean",
           "default": false,
           "description": "Automatically retry with a longer timeout when an operation times out (instead of prompting user)"
+        },
+        "sidekick.enableEventLog": {
+          "type": "boolean",
+          "default": false,
+          "description": "Record all session events to ~/.config/sidekick/event-logs/ as a JSONL audit trail for debugging."
+        },
+        "sidekick.eventLogMaxSizeMB": {
+          "type": "number",
+          "default": 500,
+          "description": "Maximum total size of event log files before oldest are cleaned up."
+        },
+        "sidekick.eventLogMaxAgeDays": {
+          "type": "number",
+          "default": 30,
+          "description": "Maximum age in days for event log files before cleanup."
         }
       }
     },

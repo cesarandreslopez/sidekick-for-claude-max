@@ -26,6 +26,7 @@ import type { TokenUsage, SessionStats, ToolAnalytics, TimelineEvent, ToolCall, 
 import type { DashboardMessage, DashboardWebviewMessage, DashboardState, CompactionEventDisplay, ToolCallDetailDisplay } from '../types/dashboard';
 import type { SessionAnalyzer } from '../services/SessionAnalyzer';
 import type { AuthService } from '../services/AuthService';
+import type { SessionEventLogger } from '../services/SessionEventLogger';
 import type { SessionSummaryData } from '../types/sessionSummary';
 import { ModelPricingService } from '../services/ModelPricingService';
 import { calculateLineChanges } from '../utils/lineChangeCalculator';
@@ -109,6 +110,16 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
 
   /** Suppresses session list updates during provider switches */
   private _suppressSessionListUpdates = false;
+
+  /** Event logger reference for toggling from the dashboard */
+  private _eventLogger?: SessionEventLogger;
+
+  /**
+   * Sets the event logger instance used for dashboard toggle control.
+   */
+  setEventLogger(logger: SessionEventLogger): void {
+    this._eventLogger = logger;
+  }
 
   /**
    * Creates a new DashboardViewProvider.
@@ -279,6 +290,7 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
         this._sendBurnRateUpdate();
         this._sendSessionList();
         this._sendProviderInfo();
+        this._sendEventLogState();
         break;
 
       case 'requestStats':
@@ -383,6 +395,16 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
       case 'requestToolCallDetails':
         this._handleToolCallDetails(message.toolName);
         break;
+
+      case 'toggleEventLog': {
+        const enabled = message.enabled;
+        log(`Dashboard: event log toggled: ${enabled}`);
+        vscode.workspace.getConfiguration('sidekick').update('enableEventLog', enabled, vscode.ConfigurationTarget.Global);
+        if (this._eventLogger) {
+          this._sessionMonitor.setEventLogger(enabled ? this._eventLogger : null);
+        }
+        break;
+      }
     }
   }
 
@@ -1511,6 +1533,14 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
       providerId: provider.id,
       displayName: provider.displayName
     });
+  }
+
+  /**
+   * Sends the current event log enabled state to the webview.
+   */
+  private _sendEventLogState(): void {
+    const enabled = vscode.workspace.getConfiguration('sidekick').get<boolean>('enableEventLog', false);
+    this._postMessage({ type: 'syncEventLogState', enabled });
   }
 
   /**
@@ -2834,6 +2864,11 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
       height: 12px;
     }
 
+    .event-log-toggle {
+      margin-left: auto;
+      font-weight: 400;
+    }
+
     /* Compaction display */
     /* Context Attribution */
     #context-attribution-chart {
@@ -3717,6 +3752,9 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
         <div class="details-toggle" data-group-toggle="session-activity-section">
           <span class="toggle-icon">▶</span>
           <h3 class="details-title">Session Activity</h3>
+          <label class="filter-toggle event-log-toggle" title="Record all session events to ~/.config/sidekick/event-logs/ for debugging. Events are written in real-time as a JSONL audit trail." onclick="event.stopPropagation()">
+            <input type="checkbox" id="event-log-toggle" /> Event Log
+          </label>
         </div>
         <div class="details-content">
           <!-- Context Attribution -->
@@ -5513,6 +5551,11 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
           case 'toolCallDetails':
             renderToolCallDetails(message.toolName, message.calls);
             break;
+
+          case 'syncEventLogState':
+            var elToggle = document.getElementById('event-log-toggle');
+            if (elToggle) elToggle.checked = message.enabled;
+            break;
         }
       });
 
@@ -5549,6 +5592,14 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
             }
             renderFilteredTimeline();
           });
+        });
+      }
+
+      // Event log toggle handler
+      var eventLogToggle = document.getElementById('event-log-toggle');
+      if (eventLogToggle) {
+        eventLogToggle.addEventListener('change', function() {
+          vscode.postMessage({ type: 'toggleEventLog', enabled: eventLogToggle.checked });
         });
       }
 

@@ -30,6 +30,7 @@ import { estimateTokens } from '../utils/tokenEstimator';
 import { ModelPricingService } from './ModelPricingService';
 import { log, logError } from './Logger';
 import { extractTaskIdFromResult } from '../utils/taskHelpers';
+import type { SessionEventLogger } from './SessionEventLogger';
 
 /**
  * Session monitoring service for Claude Code sessions.
@@ -196,6 +197,9 @@ export class SessionMonitor implements vscode.Disposable {
   /** Previous context size (for compaction delta detection) */
   private previousContextSize: number = 0;
 
+  /** Optional event logger for JSONL audit trail */
+  private eventLogger: SessionEventLogger | null = null;
+
   // Event emitters for external consumers
   private readonly _onTokenUsage = new vscode.EventEmitter<TokenUsage>();
   private readonly _onToolCall = new vscode.EventEmitter<ToolCall>();
@@ -233,6 +237,18 @@ export class SessionMonitor implements vscode.Disposable {
 
   /** Fires when a context compaction event is detected */
   readonly onCompaction = this._onCompaction.event;
+
+  /**
+   * Sets or clears the event logger for JSONL audit trail recording.
+   *
+   * @param logger - Logger instance to enable recording, or null to disable
+   */
+  setEventLogger(logger: SessionEventLogger | null): void {
+    if (this.eventLogger && !logger) {
+      this.eventLogger.endSession();
+    }
+    this.eventLogger = logger;
+  }
 
   /**
    * Creates a new SessionMonitor.
@@ -386,6 +402,7 @@ export class SessionMonitor implements vscode.Disposable {
     log(`Switching session provider: ${this.provider.displayName} -> ${newProvider.displayName}`);
 
     if (this.sessionPath) {
+      this.eventLogger?.endSession();
       this._onSessionEnd.fire();
     }
 
@@ -1490,6 +1507,7 @@ export class SessionMonitor implements vscode.Disposable {
       // Check if file still exists
       if (!this.reader.exists()) {
         log('Session file deleted, entering fast discovery mode...');
+        this.eventLogger?.endSession();
         this._onSessionEnd.fire();
         this.sessionPath = null;
         this.reader = null;
@@ -1628,6 +1646,7 @@ export class SessionMonitor implements vscode.Disposable {
       } else if (!newSessionPath && this.sessionPath) {
         // Current session gone and no new session found
         log('performNewSessionCheck: current session ended, entering fast discovery mode');
+        this.eventLogger?.endSession();
         this._onSessionEnd.fire();
         this.sessionPath = null;
         this.enterFastDiscoveryMode();
@@ -1649,6 +1668,7 @@ export class SessionMonitor implements vscode.Disposable {
     this.lastSessionSwitchTime = Date.now();
 
     // End current session
+    this.eventLogger?.endSession();
     this._onSessionEnd.fire();
 
     // Use the common attach logic
@@ -1721,6 +1741,14 @@ export class SessionMonitor implements vscode.Disposable {
     // Deduplicate events to prevent double-counting when re-reading files
     if (this.isDuplicateEvent(event)) {
       return;
+    }
+
+    // Log event to JSONL audit trail (lazy-start on first event)
+    if (this.eventLogger) {
+      if (!this.eventLogger.isSessionActive() && this.sessionId) {
+        this.eventLogger.startSession(this.provider.id, this.sessionId);
+      }
+      this.eventLogger.logEvent(event);
     }
 
     // Update message count
