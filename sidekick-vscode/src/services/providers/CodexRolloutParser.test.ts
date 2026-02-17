@@ -4,7 +4,7 @@
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
-import { CodexRolloutParser } from './CodexRolloutParser';
+import { CodexRolloutParser, extractPatchFilePaths } from './CodexRolloutParser';
 import type { CodexRolloutLine } from '../../types/codex';
 
 describe('CodexRolloutParser', () => {
@@ -390,10 +390,10 @@ describe('CodexRolloutParser', () => {
     });
   });
 
-  // --- event_msg/agent_message ---
+  // --- event_msg/agent_message (suppressed — duplicates response_item/message) ---
 
   describe('event_msg/agent_message', () => {
-    it('should convert agent_message to assistant event', () => {
+    it('should suppress agent_message (duplicates response_item/message)', () => {
       const line: CodexRolloutLine = {
         timestamp: '2025-01-15T10:09:00Z',
         type: 'event_msg',
@@ -404,17 +404,14 @@ describe('CodexRolloutParser', () => {
       };
 
       const events = parser.convertLine(line);
-      expect(events).toHaveLength(1);
-      expect(events[0].type).toBe('assistant');
-      const content = events[0].message.content as Array<{ type: string; text: string }>;
-      expect(content[0].text).toBe('I will help you with that.');
+      expect(events).toHaveLength(0);
     });
   });
 
-  // --- event_msg/user_message ---
+  // --- event_msg/user_message (suppressed — duplicates response_item/message) ---
 
   describe('event_msg/user_message', () => {
-    it('should convert user_message to user event', () => {
+    it('should suppress user_message (duplicates response_item/message)', () => {
       const line: CodexRolloutLine = {
         timestamp: '2025-01-15T10:10:00Z',
         type: 'event_msg',
@@ -425,10 +422,7 @@ describe('CodexRolloutParser', () => {
       };
 
       const events = parser.convertLine(line);
-      expect(events).toHaveLength(1);
-      expect(events[0].type).toBe('user');
-      const content = events[0].message.content as Array<{ type: string; text: string }>;
-      expect(content[0].text).toBe('Please fix the bug.');
+      expect(events).toHaveLength(0);
     });
   });
 
@@ -652,6 +646,103 @@ describe('CodexRolloutParser', () => {
     });
   });
 
+  // --- event_msg/patch_applied ---
+
+  describe('event_msg/patch_applied', () => {
+    it('should convert patch_applied to Edit tool_use event', () => {
+      parser.convertLine({
+        timestamp: '2025-01-15T10:00:00Z',
+        type: 'turn_context',
+        payload: { model: 'o4-mini' },
+      });
+
+      const events = parser.convertLine({
+        timestamp: '2025-01-15T10:14:30Z',
+        type: 'event_msg',
+        payload: {
+          type: 'patch_applied',
+          file_path: '/home/user/project/src/index.ts',
+          additions: 5,
+          deletions: 2,
+        },
+      });
+
+      expect(events).toHaveLength(1);
+      expect(events[0].type).toBe('assistant');
+      expect(events[0].message.model).toBe('o4-mini');
+      const content = events[0].message.content as Array<{
+        type: string; id: string; name: string; input: Record<string, unknown>;
+      }>;
+      expect(content[0].type).toBe('tool_use');
+      expect(content[0].name).toBe('Edit');
+      expect(content[0].input.file_path).toBe('/home/user/project/src/index.ts');
+      expect(content[0].input.additions).toBe(5);
+      expect(content[0].input.deletions).toBe(2);
+    });
+
+    it('should emit no events for patch_applied without file_path', () => {
+      const events = parser.convertLine({
+        timestamp: '2025-01-15T10:14:30Z',
+        type: 'event_msg',
+        payload: { type: 'patch_applied' },
+      });
+      expect(events).toHaveLength(0);
+    });
+  });
+
+  // --- event_msg/token_count model_context_window ---
+
+  describe('event_msg/token_count model_context_window', () => {
+    it('should store model_context_window from token_count events', () => {
+      expect(parser.getModelContextWindow()).toBeNull();
+
+      parser.convertLine({
+        timestamp: '2025-01-15T10:08:00Z',
+        type: 'event_msg',
+        payload: {
+          type: 'token_count',
+          info: {
+            model_context_window: 1_048_576,
+            last_token_usage: {
+              input_tokens: 1000,
+              output_tokens: 200,
+            },
+          },
+        },
+      });
+
+      expect(parser.getModelContextWindow()).toBe(1_048_576);
+    });
+
+    it('should not overwrite with missing model_context_window', () => {
+      parser.convertLine({
+        timestamp: '2025-01-15T10:08:00Z',
+        type: 'event_msg',
+        payload: {
+          type: 'token_count',
+          info: {
+            model_context_window: 200_000,
+            last_token_usage: { input_tokens: 100, output_tokens: 50 },
+          },
+        },
+      });
+
+      parser.convertLine({
+        timestamp: '2025-01-15T10:09:00Z',
+        type: 'event_msg',
+        payload: {
+          type: 'token_count',
+          info: {
+            last_token_usage: { input_tokens: 200, output_tokens: 100 },
+          },
+        },
+      });
+
+      // Should keep the previous value since new event didn't include it
+      expect(parser.getModelContextWindow()).toBe(200_000);
+    });
+  });
+
   // --- Silent event types ---
 
   describe('silent event types', () => {
@@ -673,11 +764,20 @@ describe('CodexRolloutParser', () => {
       expect(events).toHaveLength(0);
     });
 
-    it('should emit no events for patch_applied', () => {
+    it('should emit no events for agent_message', () => {
       const events = parser.convertLine({
         timestamp: '2025-01-15T10:15:00Z',
         type: 'event_msg',
-        payload: { type: 'patch_applied', file_path: '/tmp/foo.ts' },
+        payload: { type: 'agent_message', message: 'hello' },
+      });
+      expect(events).toHaveLength(0);
+    });
+
+    it('should emit no events for user_message', () => {
+      const events = parser.convertLine({
+        timestamp: '2025-01-15T10:15:00Z',
+        type: 'event_msg',
+        payload: { type: 'user_message', message: 'hello' },
       });
       expect(events).toHaveLength(0);
     });
@@ -689,6 +789,223 @@ describe('CodexRolloutParser', () => {
         payload: { type: 'background', message: 'indexing...' },
       });
       expect(events).toHaveLength(0);
+    });
+  });
+
+  // --- response_item/custom_tool_call ---
+
+  describe('response_item/custom_tool_call', () => {
+    it('should convert apply_patch to Edit tool_use events with extracted file paths', () => {
+      parser.convertLine({
+        timestamp: '2025-01-15T10:00:00Z',
+        type: 'turn_context',
+        payload: { model: 'o4-mini' },
+      });
+
+      const events = parser.convertLine({
+        timestamp: '2025-01-15T10:05:00Z',
+        type: 'response_item',
+        payload: {
+          type: 'custom_tool_call',
+          call_id: 'call_abc123',
+          name: 'apply_patch',
+          input: '*** Begin Patch\n*** Add File: src/math.ts\n+export function add(a: number, b: number) { return a + b; }\n',
+          status: 'completed',
+        },
+      } as unknown as CodexRolloutLine);
+
+      expect(events).toHaveLength(1);
+      expect(events[0].type).toBe('assistant');
+      expect(events[0].message.model).toBe('o4-mini');
+      const content = events[0].message.content as Array<{ type: string; id: string; name: string; input: Record<string, unknown> }>;
+      expect(content[0].type).toBe('tool_use');
+      expect(content[0].name).toBe('Edit');
+      expect(content[0].input.file_path).toBe('src/math.ts');
+    });
+
+    it('should produce one Edit per file for multi-file apply_patch', () => {
+      const events = parser.convertLine({
+        timestamp: '2025-01-15T10:05:00Z',
+        type: 'response_item',
+        payload: {
+          type: 'custom_tool_call',
+          call_id: 'call_multi',
+          name: 'apply_patch',
+          input: [
+            '*** Begin Patch',
+            '*** Update File: src/index.ts',
+            '@@',
+            '-old line',
+            '+new line',
+            '*** Add File: src/utils.ts',
+            '+export const foo = 1;',
+            '*** Delete File: src/old.ts',
+          ].join('\n'),
+          status: 'completed',
+        },
+      } as unknown as CodexRolloutLine);
+
+      expect(events).toHaveLength(3);
+      const names = events.map(e => {
+        const c = e.message.content as Array<{ name: string; input: Record<string, unknown> }>;
+        return { name: c[0].name, file: c[0].input.file_path };
+      });
+      expect(names).toEqual([
+        { name: 'Edit', file: 'src/index.ts' },
+        { name: 'Edit', file: 'src/utils.ts' },
+        { name: 'Edit', file: 'src/old.ts' },
+      ]);
+    });
+
+    it('should emit no events for apply_patch with no file paths', () => {
+      const events = parser.convertLine({
+        timestamp: '2025-01-15T10:05:00Z',
+        type: 'response_item',
+        payload: {
+          type: 'custom_tool_call',
+          call_id: 'call_empty',
+          name: 'apply_patch',
+          input: '*** Begin Patch\n',
+          status: 'completed',
+        },
+      } as unknown as CodexRolloutLine);
+
+      expect(events).toHaveLength(0);
+    });
+
+    it('should convert non-patch custom_tool_call to generic tool_use', () => {
+      const events = parser.convertLine({
+        timestamp: '2025-01-15T10:05:00Z',
+        type: 'response_item',
+        payload: {
+          type: 'custom_tool_call',
+          call_id: 'call_custom',
+          name: 'web_search',
+          input: '{"query":"vitest testing"}',
+          status: 'completed',
+        },
+      } as unknown as CodexRolloutLine);
+
+      expect(events).toHaveLength(1);
+      expect(events[0].type).toBe('assistant');
+      const content = events[0].message.content as Array<{ type: string; name: string; input: Record<string, unknown> }>;
+      expect(content[0].type).toBe('tool_use');
+      expect(content[0].name).toBe('Web_search');
+      expect(content[0].input).toEqual({ query: 'vitest testing' });
+    });
+
+    it('should wrap non-JSON input as { raw: ... } for generic custom tool', () => {
+      const events = parser.convertLine({
+        timestamp: '2025-01-15T10:05:00Z',
+        type: 'response_item',
+        payload: {
+          type: 'custom_tool_call',
+          call_id: 'call_raw',
+          name: 'some_tool',
+          input: 'not json at all',
+        },
+      } as unknown as CodexRolloutLine);
+
+      expect(events).toHaveLength(1);
+      const content = events[0].message.content as Array<{ input: Record<string, unknown> }>;
+      expect(content[0].input).toEqual({ raw: 'not json at all' });
+    });
+  });
+
+  // --- response_item/custom_tool_call_output ---
+
+  describe('response_item/custom_tool_call_output', () => {
+    it('should convert custom_tool_call_output to tool_result', () => {
+      const events = parser.convertLine({
+        timestamp: '2025-01-15T10:06:00Z',
+        type: 'response_item',
+        payload: {
+          type: 'custom_tool_call_output',
+          call_id: 'call_abc123',
+          output: '{"output":"Success. Updated the following files:\\nA src/math.ts\\n","metadata":{"exit_code":0}}',
+        },
+      } as unknown as CodexRolloutLine);
+
+      expect(events).toHaveLength(1);
+      expect(events[0].type).toBe('user');
+      const content = events[0].message.content as Array<{ type: string; tool_use_id: string; content: string; is_error: boolean }>;
+      expect(content[0].type).toBe('tool_result');
+      expect(content[0].tool_use_id).toBe('call_abc123');
+      expect(content[0].is_error).toBe(false);
+    });
+
+    it('should mark is_error=true for non-zero exit code', () => {
+      const events = parser.convertLine({
+        timestamp: '2025-01-15T10:06:00Z',
+        type: 'response_item',
+        payload: {
+          type: 'custom_tool_call_output',
+          call_id: 'call_fail',
+          output: '{"output":"Error applying patch","metadata":{"exit_code":1}}',
+        },
+      } as unknown as CodexRolloutLine);
+
+      expect(events).toHaveLength(1);
+      const content = events[0].message.content as Array<{ is_error: boolean }>;
+      expect(content[0].is_error).toBe(true);
+    });
+
+    it('should extract duration from metadata.duration_seconds', () => {
+      const events = parser.convertLine({
+        timestamp: '2025-01-15T10:06:00Z',
+        type: 'response_item',
+        payload: {
+          type: 'custom_tool_call_output',
+          call_id: 'call_dur',
+          output: '{"output":"ok","metadata":{"exit_code":0,"duration_seconds":1.234}}',
+        },
+      } as unknown as CodexRolloutLine);
+
+      expect(events).toHaveLength(1);
+      const content = events[0].message.content as Array<{ duration?: number }>;
+      expect(content[0].duration).toBe(1234);
+    });
+
+    it('should handle non-JSON output gracefully', () => {
+      const events = parser.convertLine({
+        timestamp: '2025-01-15T10:06:00Z',
+        type: 'response_item',
+        payload: {
+          type: 'custom_tool_call_output',
+          call_id: 'call_plain',
+          output: 'plain text output',
+        },
+      } as unknown as CodexRolloutLine);
+
+      expect(events).toHaveLength(1);
+      const content = events[0].message.content as Array<{ content: string; is_error: boolean }>;
+      expect(content[0].content).toBe('plain text output');
+      expect(content[0].is_error).toBe(false);
+    });
+  });
+
+  // --- extractPatchFilePaths ---
+
+  describe('extractPatchFilePaths', () => {
+    it('should extract Add File paths', () => {
+      expect(extractPatchFilePaths('*** Add File: src/new.ts\n+code')).toEqual(['src/new.ts']);
+    });
+
+    it('should extract Update File paths', () => {
+      expect(extractPatchFilePaths('*** Update File: src/existing.ts\n@@\n-old\n+new')).toEqual(['src/existing.ts']);
+    });
+
+    it('should extract Delete File paths', () => {
+      expect(extractPatchFilePaths('*** Delete File: src/old.ts')).toEqual(['src/old.ts']);
+    });
+
+    it('should extract multiple file paths', () => {
+      const input = '*** Begin Patch\n*** Add File: a.ts\n+x\n*** Update File: b.ts\n@@\n-y\n+z\n*** Delete File: c.ts';
+      expect(extractPatchFilePaths(input)).toEqual(['a.ts', 'b.ts', 'c.ts']);
+    });
+
+    it('should return empty array for no file paths', () => {
+      expect(extractPatchFilePaths('*** Begin Patch\nno files here')).toEqual([]);
     });
   });
 
@@ -754,14 +1071,28 @@ describe('CodexRolloutParser', () => {
         },
       });
 
+      parser.convertLine({
+        timestamp: '2025-01-15T10:00:03Z',
+        type: 'event_msg',
+        payload: {
+          type: 'token_count',
+          info: {
+            model_context_window: 200_000,
+            last_token_usage: { input_tokens: 100, output_tokens: 50 },
+          },
+        },
+      });
+
       expect(parser.getSessionMeta()).not.toBeNull();
       expect(parser.getCurrentModel()).toBe('gpt-4.1');
+      expect(parser.getModelContextWindow()).toBe(200_000);
 
       parser.reset();
 
       expect(parser.getSessionMeta()).toBeNull();
       expect(parser.getCurrentModel()).toBeNull();
       expect(parser.getLastTokenUsage()).toBeNull();
+      expect(parser.getModelContextWindow()).toBeNull();
     });
   });
 

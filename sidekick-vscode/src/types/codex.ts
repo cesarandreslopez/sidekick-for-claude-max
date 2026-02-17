@@ -52,7 +52,9 @@ export type CodexResponseItem =
   | CodexFunctionCallItem
   | CodexFunctionCallOutputItem
   | CodexLocalShellCallItem
-  | CodexWebSearchCallItem;
+  | CodexWebSearchCallItem
+  | CodexCustomToolCallItem
+  | CodexCustomToolCallOutputItem;
 
 /** Chat message (user, assistant, or developer). */
 export interface CodexMessageItem {
@@ -122,6 +124,23 @@ export interface CodexWebSearchCallItem {
   id?: string;
   call_id?: string;
   status?: string;
+}
+
+/** Custom tool call (e.g. apply_patch, web_search). */
+export interface CodexCustomToolCallItem {
+  type: 'custom_tool_call';
+  id?: string;
+  call_id: string;
+  name: string;
+  input: string;
+  status?: string;
+}
+
+/** Result of a custom tool call. */
+export interface CodexCustomToolCallOutputItem {
+  type: 'custom_tool_call_output';
+  call_id: string;
+  output: string;
 }
 
 // --- compacted ---

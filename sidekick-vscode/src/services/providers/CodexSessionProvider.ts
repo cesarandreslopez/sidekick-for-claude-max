@@ -177,7 +177,10 @@ class CodexReader implements SessionReader {
   private lineBuffer = '';
   private _wasTruncated = false;
 
-  constructor(private readonly rolloutPath: string) {
+  constructor(
+    private readonly rolloutPath: string,
+    private readonly onContextWindowLimit?: (limit: number) => void,
+  ) {
     this.parser = new CodexRolloutParser();
   }
 
@@ -235,6 +238,11 @@ class CodexReader implements SessionReader {
         } catch {
           // Skip malformed JSON lines
         }
+      }
+      // Propagate model_context_window from token_count events to the provider
+      const mcw = this.parser.getModelContextWindow();
+      if (mcw && this.onContextWindowLimit) {
+        this.onContextWindowLimit(mcw);
       }
     } catch (error) {
       log(`CodexReader: error reading: ${error}`);
@@ -294,6 +302,7 @@ export class CodexSessionProvider implements SessionProvider {
 
   private db: CodexDatabase | null = null;
   private dbInitialized = false;
+  private dynamicContextWindowLimit: number | null = null;
 
   /** Lazy-initialize database connection. */
   private ensureDb(): CodexDatabase | null {
@@ -506,7 +515,9 @@ export class CodexSessionProvider implements SessionProvider {
   }
 
   createReader(sessionPath: string): SessionReader {
-    return new CodexReader(sessionPath);
+    return new CodexReader(sessionPath, (limit) => {
+      this.dynamicContextWindowLimit = limit;
+    });
   }
 
   scanSubagents(_sessionDir: string, _sessionId: string): SubagentStats[] {
@@ -569,6 +580,9 @@ export class CodexSessionProvider implements SessionProvider {
   }
 
   getContextWindowLimit(modelId?: string): number {
+    // Prefer actual model_context_window reported by token_count events
+    if (this.dynamicContextWindowLimit) return this.dynamicContextWindowLimit;
+
     if (!modelId) return 128_000;
     const id = modelId.toLowerCase();
 
@@ -585,7 +599,8 @@ export class CodexSessionProvider implements SessionProvider {
   }
 
   computeContextSize(usage: TokenUsage): number {
-    return usage.inputTokens + usage.cacheReadTokens;
+    // OpenAI's input_tokens already includes cached_input_tokens (it's a subset, not additive)
+    return usage.inputTokens;
   }
 
   dispose(): void {

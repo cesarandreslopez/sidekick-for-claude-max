@@ -22,17 +22,18 @@ import type {
   CodexFunctionCallItem,
   CodexFunctionCallOutputItem,
   CodexLocalShellCallItem,
+  CodexCustomToolCallItem,
+  CodexCustomToolCallOutputItem,
   CodexContentPart,
   CodexTokenUsage,
   CodexTokenCountEvent,
-  CodexAgentMessageEvent,
-  CodexUserMessageEvent,
   CodexExecCommandBeginEvent,
   CodexExecCommandEndEvent,
   CodexMcpToolCallBeginEvent,
   CodexMcpToolCallEndEvent,
   CodexErrorEvent,
   CodexContextCompactedEvent,
+  CodexPatchAppliedEvent,
 } from '../../types/codex';
 import { normalizeToolName } from './OpenCodeMessageParser';
 
@@ -77,6 +78,20 @@ function extractTextFromContent(content: CodexContentPart[] | string): string {
 }
 
 /**
+ * Extracts file paths from an apply_patch input string.
+ * Matches lines like: `*** Add File: src/math.ts` or `*** Update File: src/index.ts`
+ */
+export function extractPatchFilePaths(input: string): string[] {
+  const paths: string[] = [];
+  const re = /\*\*\* (?:Add|Update|Delete) File: (.+)/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(input)) !== null) {
+    paths.push(m[1].trim());
+  }
+  return paths;
+}
+
+/**
  * Stateful parser for Codex JSONL rollout lines.
  *
  * Maintains internal state for:
@@ -91,6 +106,7 @@ export class CodexRolloutParser {
   private pendingExecCommands = new Map<string, PendingExecCommand>();
   private pendingMcpToolCalls = new Map<string, PendingMcpToolCall>();
   private lastTokenUsage: CodexTokenUsage | null = null;
+  private modelContextWindow: number | null = null;
 
   /** Get stored session metadata. */
   getSessionMeta(): CodexSessionMeta | null {
@@ -105,6 +121,11 @@ export class CodexRolloutParser {
   /** Get the last observed token usage snapshot. */
   getLastTokenUsage(): CodexTokenUsage | null {
     return this.lastTokenUsage;
+  }
+
+  /** Get the model context window size from token_count events. */
+  getModelContextWindow(): number | null {
+    return this.modelContextWindow;
   }
 
   /**
@@ -134,6 +155,7 @@ export class CodexRolloutParser {
     this.pendingExecCommands.clear();
     this.pendingMcpToolCalls.clear();
     this.lastTokenUsage = null;
+    this.modelContextWindow = null;
   }
 
   // --- Handlers ---
@@ -158,6 +180,10 @@ export class CodexRolloutParser {
         return this.handleFunctionCallOutput(timestamp, payload as CodexFunctionCallOutputItem);
       case 'local_shell_call':
         return this.handleLocalShellCall(timestamp, payload as CodexLocalShellCallItem);
+      case 'custom_tool_call':
+        return this.handleCustomToolCall(timestamp, payload as CodexCustomToolCallItem);
+      case 'custom_tool_call_output':
+        return this.handleCustomToolCallOutput(timestamp, payload as CodexCustomToolCallOutputItem);
       default:
         return [];
     }
@@ -275,6 +301,80 @@ export class CodexRolloutParser {
     }];
   }
 
+  private handleCustomToolCall(timestamp: string, item: CodexCustomToolCallItem): ClaudeSessionEvent[] {
+    if (item.name === 'apply_patch') {
+      const filePaths = extractPatchFilePaths(item.input);
+      if (filePaths.length === 0) return [];
+      return filePaths.map(fp => ({
+        type: 'assistant' as const,
+        message: {
+          role: 'assistant' as const,
+          id: `${item.call_id}-${fp}`,
+          model: this.currentModel || undefined,
+          content: [{
+            type: 'tool_use',
+            id: `${item.call_id}-${fp}`,
+            name: 'Edit',
+            input: { file_path: fp },
+          }],
+        },
+        timestamp,
+      }));
+    }
+
+    // Generic custom tool
+    let parsedInput: Record<string, unknown>;
+    try {
+      parsedInput = JSON.parse(item.input);
+    } catch {
+      parsedInput = { raw: item.input };
+    }
+
+    return [{
+      type: 'assistant',
+      message: {
+        role: 'assistant',
+        id: item.call_id,
+        model: this.currentModel || undefined,
+        content: [{
+          type: 'tool_use',
+          id: item.call_id,
+          name: normalizeCodexToolName(item.name),
+          input: parsedInput,
+        }],
+      },
+      timestamp,
+    }];
+  }
+
+  private handleCustomToolCallOutput(timestamp: string, item: CodexCustomToolCallOutputItem): ClaudeSessionEvent[] {
+    let isError = false;
+    let duration: number | undefined;
+    try {
+      const parsed = JSON.parse(item.output);
+      isError = parsed?.metadata?.exit_code !== 0 && parsed?.metadata?.exit_code !== undefined;
+      if (parsed?.metadata?.duration_seconds) {
+        duration = Math.round(parsed.metadata.duration_seconds * 1000);
+      }
+    } catch { /* use raw output */ }
+
+    return [{
+      type: 'user',
+      message: {
+        role: 'user',
+        id: `${item.call_id}:result`,
+        content: [{
+          type: 'tool_result',
+          tool_use_id: item.call_id,
+          content: item.output,
+          is_error: isError,
+          duration,
+        }],
+      },
+      timestamp,
+    }];
+  }
+
   private handleCompacted(timestamp: string, payload: CodexCompacted): ClaudeSessionEvent[] {
     return [{
       type: 'summary',
@@ -301,37 +401,17 @@ export class CodexRolloutParser {
     switch (event.type) {
       case 'token_count': {
         const e = event as CodexTokenCountEvent;
+        // Store model_context_window if provided (actual limit for current model)
+        if (e.info?.model_context_window) {
+          this.modelContextWindow = e.info.model_context_window;
+        }
         // Usage data is nested under info.last_token_usage (info can be null)
         const usage = e.info?.last_token_usage || e.info?.total_token_usage;
         return this.handleTokenCount(timestamp, usage ?? null);
       }
 
-      case 'agent_message': {
-        const e = event as CodexAgentMessageEvent;
-        return [{
-          type: 'assistant',
-          message: {
-            role: 'assistant',
-            id: `agent-msg-${timestamp}`,
-            model: this.currentModel || undefined,
-            content: [{ type: 'text', text: e.message }],
-          },
-          timestamp,
-        }];
-      }
-
-      case 'user_message': {
-        const e = event as CodexUserMessageEvent;
-        return [{
-          type: 'user',
-          message: {
-            role: 'user',
-            id: `user-msg-${timestamp}`,
-            content: [{ type: 'text', text: e.message }],
-          },
-          timestamp,
-        }];
-      }
+      // agent_message and user_message are suppressed — they duplicate
+      // response_item/message events which carry richer metadata (id, content parts, role).
 
       case 'exec_command_begin': {
         const e = event as CodexExecCommandBeginEvent;
@@ -468,13 +548,39 @@ export class CodexRolloutParser {
         }];
       }
 
+      case 'patch_applied': {
+        const e = event as CodexPatchAppliedEvent;
+        if (!e.file_path) return [];
+        const patchId = `patch-${timestamp}-${e.file_path}`;
+        return [{
+          type: 'assistant',
+          message: {
+            role: 'assistant',
+            id: patchId,
+            model: this.currentModel || undefined,
+            content: [{
+              type: 'tool_use',
+              id: patchId,
+              name: 'Edit',
+              input: {
+                file_path: e.file_path,
+                additions: e.additions ?? 0,
+                deletions: e.deletions ?? 0,
+              },
+            }],
+          },
+          timestamp,
+        }];
+      }
+
       case 'turn_started':
       case 'turn_complete':
       case 'task_started':
       case 'task_complete':
       case 'turn_aborted':
       case 'agent_reasoning':
-      case 'patch_applied':
+      case 'agent_message':
+      case 'user_message':
       case 'background':
         return [];
 
