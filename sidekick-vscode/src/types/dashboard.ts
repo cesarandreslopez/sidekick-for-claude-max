@@ -109,6 +109,7 @@ export type DashboardMessage =
   | { type: 'narrativeError'; error: string }
   | { type: 'updateCompactions'; compactions: CompactionEventDisplay[] }
   | { type: 'updateContextAttribution'; attribution: ContextAttributionDisplay[] }
+  | { type: 'sessionsLoading'; loading: boolean }
   | { type: 'notification'; title: string; body: string; severity: 'info' | 'warning' | 'error' }
   | { type: 'toolCallDetails'; toolName: string; calls: ToolCallDetailDisplay[] };
 

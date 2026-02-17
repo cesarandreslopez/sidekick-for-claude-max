@@ -290,6 +290,7 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
 
       case 'setSessionProvider':
         log(`Dashboard: user selected session provider: ${message.providerId}`);
+        this._postMessage({ type: 'sessionsLoading', loading: true });
         vscode.commands.executeCommand('sidekick.setSessionProvider', message.providerId);
         break;
 
@@ -3237,6 +3238,28 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
       color: var(--vscode-descriptionForeground);
     }
 
+    .session-list-loading {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      padding: 16px 8px;
+      text-align: center;
+      font-size: 11px;
+      color: var(--vscode-descriptionForeground);
+    }
+
+    .session-list-spinner {
+      display: inline-block;
+      width: 12px;
+      height: 12px;
+      border: 2px solid var(--vscode-descriptionForeground);
+      border-top-color: transparent;
+      border-radius: 50%;
+      animation: narrative-spin 0.8s linear infinite;
+      flex-shrink: 0;
+    }
+
     .custom-path-indicator {
       display: none;
       margin-bottom: 8px;
@@ -3549,7 +3572,10 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
       </div>
     </div>
     <div class="session-list" id="session-list">
-      <div class="session-list-empty">Loading sessions...</div>
+      <div class="session-list-loading">
+        <span class="session-list-spinner"></span>
+        Loading sessions\u2026
+      </div>
     </div>
   </div>
 
@@ -5369,6 +5395,15 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
             updateSessionList(message.groups, message.isPinned, message.isUsingCustomPath, message.customPathDisplay);
             break;
 
+          case 'sessionsLoading':
+            if (message.loading && sessionListEl) {
+              sessionListEl.innerHTML = '<div class="session-list-loading">' +
+                '<span class="session-list-spinner"></span>' +
+                'Loading sessions\u2026' +
+                '</div>';
+            }
+            break;
+
           case 'updateSessionProvider':
             updateProviderDisplay(message.providerId, message.displayName);
             break;
@@ -5541,6 +5576,13 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
         sessionProviderSelect.addEventListener('change', function() {
           var nextProvider = sessionProviderSelect.value;
           if (nextProvider && nextProvider !== currentProviderId) {
+            var providerLabel = sessionProviderSelect.options[sessionProviderSelect.selectedIndex].text;
+            if (sessionListEl) {
+              sessionListEl.innerHTML = '<div class="session-list-loading">' +
+                '<span class="session-list-spinner"></span>' +
+                'Loading ' + escapeHtml(providerLabel) + ' sessions\u2026' +
+                '</div>';
+            }
             vscode.postMessage({ type: 'setSessionProvider', providerId: nextProvider });
           }
         });
