@@ -26,6 +26,7 @@ import type {
   CodexCustomToolCallOutputItem,
   CodexContentPart,
   CodexTokenUsage,
+  CodexRateLimits,
   CodexTokenCountEvent,
   CodexExecCommandBeginEvent,
   CodexExecCommandEndEvent,
@@ -107,6 +108,7 @@ export class CodexRolloutParser {
   private pendingMcpToolCalls = new Map<string, PendingMcpToolCall>();
   private lastTokenUsage: CodexTokenUsage | null = null;
   private modelContextWindow: number | null = null;
+  private lastRateLimits: CodexRateLimits | null = null;
 
   /** Get stored session metadata. */
   getSessionMeta(): CodexSessionMeta | null {
@@ -126,6 +128,11 @@ export class CodexRolloutParser {
   /** Get the model context window size from token_count events. */
   getModelContextWindow(): number | null {
     return this.modelContextWindow;
+  }
+
+  /** Get the last observed rate limits from token_count events. */
+  getLastRateLimits(): CodexRateLimits | null {
+    return this.lastRateLimits;
   }
 
   /**
@@ -156,6 +163,7 @@ export class CodexRolloutParser {
     this.pendingMcpToolCalls.clear();
     this.lastTokenUsage = null;
     this.modelContextWindow = null;
+    this.lastRateLimits = null;
   }
 
   // --- Handlers ---
@@ -404,6 +412,10 @@ export class CodexRolloutParser {
         // Store model_context_window if provided (actual limit for current model)
         if (e.info?.model_context_window) {
           this.modelContextWindow = e.info.model_context_window;
+        }
+        // Store rate_limits if provided (subscription quota data)
+        if (e.rate_limits) {
+          this.lastRateLimits = e.rate_limits;
         }
         // Usage data is nested under info.last_token_usage (info can be null)
         const usage = e.info?.last_token_usage || e.info?.total_token_usage;

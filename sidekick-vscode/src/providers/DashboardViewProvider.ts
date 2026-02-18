@@ -202,6 +202,11 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
       );
     }
 
+    // Subscribe to session-based quota updates (e.g., Codex rate_limits)
+    this._disposables.push(
+      this._sessionMonitor.onQuotaUpdate(quota => this._handleQuotaUpdate(quota))
+    );
+
     // Initialize state from existing session if active
     if (this._sessionMonitor.isActive()) {
       this._syncFromSessionMonitor();
@@ -291,6 +296,13 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
         this._sendSessionList();
         this._sendProviderInfo();
         this._sendEventLogState();
+        // Send session-based quota if available (e.g., Codex rate_limits)
+        {
+          const sessionQuota = this._sessionMonitor.getProvider().getQuotaFromSession?.();
+          if (sessionQuota) {
+            this._handleQuotaUpdate(sessionQuota);
+          }
+        }
         break;
 
       case 'requestStats':
@@ -4732,7 +4744,7 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
 
         if (!sectionEl || !contentEl || !errorEl) return;
 
-        if (currentProviderId === 'opencode' || currentProviderId === 'codex') {
+        if (currentProviderId === 'opencode') {
           sectionEl.classList.remove('visible');
           contentEl.style.display = 'none';
           errorEl.style.display = 'none';
@@ -5162,13 +5174,13 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
         var quotaErrorEl = document.getElementById('quota-error');
 
         if (gaugeRow) {
-          gaugeRow.classList.toggle('opencode-provider', currentProviderId === 'opencode' || currentProviderId === 'codex');
+          gaugeRow.classList.toggle('opencode-provider', currentProviderId === 'opencode');
         }
 
         // For OpenCode: repurpose the Quota button as "Context" (no subscription quota)
         // For Claude Code: restore the Quota button label and show subscription quota
         var quotaBtn = document.querySelector('.metric-btn[data-metric="quota"]');
-        if (currentProviderId === 'opencode' || currentProviderId === 'codex') {
+        if (currentProviderId === 'opencode') {
           if (quotaSectionEl) quotaSectionEl.classList.remove('visible');
           if (quotaContentEl) quotaContentEl.style.display = 'none';
           if (quotaErrorEl) quotaErrorEl.style.display = 'none';

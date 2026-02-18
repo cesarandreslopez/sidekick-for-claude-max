@@ -16,8 +16,9 @@ import { log } from '../Logger';
 import { CodexRolloutParser } from './CodexRolloutParser';
 import { CodexDatabase } from './CodexDatabase';
 import type { SessionProvider, SessionReader, ProjectFolderInfo, SearchHit } from '../../types/sessionProvider';
+import type { QuotaState } from '../../types/dashboard';
 import type { ClaudeSessionEvent, SubagentStats, TokenUsage } from '../../types/claudeSession';
-import type { CodexRolloutLine, CodexSessionMeta } from '../../types/codex';
+import type { CodexRolloutLine, CodexRateLimits, CodexSessionMeta } from '../../types/codex';
 
 /**
  * Gets the Codex home directory.
@@ -180,6 +181,7 @@ class CodexReader implements SessionReader {
   constructor(
     private readonly rolloutPath: string,
     private readonly onContextWindowLimit?: (limit: number) => void,
+    private readonly onRateLimits?: (limits: CodexRateLimits) => void,
   ) {
     this.parser = new CodexRolloutParser();
   }
@@ -244,6 +246,11 @@ class CodexReader implements SessionReader {
       if (mcw && this.onContextWindowLimit) {
         this.onContextWindowLimit(mcw);
       }
+      // Propagate rate_limits from token_count events to the provider
+      const rateLimits = this.parser.getLastRateLimits();
+      if (rateLimits && this.onRateLimits) {
+        this.onRateLimits(rateLimits);
+      }
     } catch (error) {
       log(`CodexReader: error reading: ${error}`);
     }
@@ -303,6 +310,7 @@ export class CodexSessionProvider implements SessionProvider {
   private db: CodexDatabase | null = null;
   private dbInitialized = false;
   private dynamicContextWindowLimit: number | null = null;
+  private lastRateLimits: CodexRateLimits | null = null;
 
   /** Lazy-initialize database connection. */
   private ensureDb(): CodexDatabase | null {
@@ -515,9 +523,11 @@ export class CodexSessionProvider implements SessionProvider {
   }
 
   createReader(sessionPath: string): SessionReader {
-    return new CodexReader(sessionPath, (limit) => {
-      this.dynamicContextWindowLimit = limit;
-    });
+    return new CodexReader(
+      sessionPath,
+      (limit) => { this.dynamicContextWindowLimit = limit; },
+      (limits) => { this.lastRateLimits = limits; },
+    );
   }
 
   scanSubagents(_sessionDir: string, _sessionId: string): SubagentStats[] {
@@ -601,6 +611,23 @@ export class CodexSessionProvider implements SessionProvider {
   computeContextSize(usage: TokenUsage): number {
     // OpenAI's input_tokens already includes cached_input_tokens (it's a subset, not additive)
     return usage.inputTokens;
+  }
+
+  getQuotaFromSession(): QuotaState | null {
+    if (!this.lastRateLimits) return null;
+    const { primary, secondary } = this.lastRateLimits;
+    if (!primary || !secondary) return null;
+    return {
+      fiveHour: {
+        utilization: primary.used_percent,
+        resetsAt: new Date(primary.resets_at * 1000).toISOString(),
+      },
+      sevenDay: {
+        utilization: secondary.used_percent,
+        resetsAt: new Date(secondary.resets_at * 1000).toISOString(),
+      },
+      available: true,
+    };
   }
 
   dispose(): void {

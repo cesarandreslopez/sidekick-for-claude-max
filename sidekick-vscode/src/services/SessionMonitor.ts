@@ -21,7 +21,7 @@ import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as os from 'os';
 import path from 'path';
-import type { SessionGroup, SessionInfo } from '../types/dashboard';
+import type { SessionGroup, SessionInfo, QuotaState } from '../types/dashboard';
 import { extractTokenUsage } from './JsonlParser';
 import type { SessionProvider, SessionReader } from '../types/sessionProvider';
 import { ClaudeSessionEvent, TokenUsage, ToolCall, SessionStats, ToolAnalytics, TimelineEvent, PendingToolCall, SubagentStats, TaskState, TrackedTask, TaskStatus, PendingUserRequest, ResponseLatency, LatencyStats, CompactionEvent, ContextAttribution } from '../types/claudeSession';
@@ -210,6 +210,7 @@ export class SessionMonitor implements vscode.Disposable {
   private readonly _onDiscoveryModeChange = new vscode.EventEmitter<boolean>();
   private readonly _onLatencyUpdate = new vscode.EventEmitter<LatencyStats>();
   private readonly _onCompaction = new vscode.EventEmitter<CompactionEvent>();
+  private readonly _onQuotaUpdate = new vscode.EventEmitter<QuotaState>();
 
   /** Fires when token usage is detected in session */
   readonly onTokenUsage = this._onTokenUsage.event;
@@ -237,6 +238,9 @@ export class SessionMonitor implements vscode.Disposable {
 
   /** Fires when a context compaction event is detected */
   readonly onCompaction = this._onCompaction.event;
+
+  /** Fires when subscription quota data is available from session provider */
+  readonly onQuotaUpdate = this._onQuotaUpdate.event;
 
   /**
    * Sets or clears the event logger for JSONL audit trail recording.
@@ -1418,6 +1422,7 @@ export class SessionMonitor implements vscode.Disposable {
     this._onDiscoveryModeChange.dispose();
     this._onLatencyUpdate.dispose();
     this._onCompaction.dispose();
+    this._onQuotaUpdate.dispose();
 
     // Reset state
     this.sessionPath = null;
@@ -1536,6 +1541,14 @@ export class SessionMonitor implements vscode.Disposable {
 
       for (const event of newEvents) {
         this.handleEvent(event);
+      }
+
+      // Propagate session-based quota data (e.g., Codex rate_limits)
+      if (newEvents.length > 0) {
+        const quota = this.provider.getQuotaFromSession?.();
+        if (quota) {
+          this._onQuotaUpdate.fire(quota);
+        }
       }
     } catch (error) {
       logError('Error reading session file changes', error);

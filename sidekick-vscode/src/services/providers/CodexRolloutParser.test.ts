@@ -1096,6 +1096,92 @@ describe('CodexRolloutParser', () => {
     });
   });
 
+  // --- event_msg/token_count rate_limits ---
+
+  describe('event_msg/token_count rate_limits', () => {
+    it('should store rate_limits from token_count events', () => {
+      expect(parser.getLastRateLimits()).toBeNull();
+
+      parser.convertLine({
+        timestamp: '2025-01-15T10:08:00Z',
+        type: 'event_msg',
+        payload: {
+          type: 'token_count',
+          info: {
+            last_token_usage: { input_tokens: 1000, output_tokens: 200 },
+          },
+          rate_limits: {
+            limit_id: 'codex',
+            primary: { used_percent: 16.0, window_minutes: 300, resets_at: 1771331406 },
+            secondary: { used_percent: 94.0, window_minutes: 10080, resets_at: 1771407310 },
+          },
+        },
+      });
+
+      const limits = parser.getLastRateLimits();
+      expect(limits).not.toBeNull();
+      expect(limits!.limit_id).toBe('codex');
+      expect(limits!.primary!.used_percent).toBe(16.0);
+      expect(limits!.secondary!.used_percent).toBe(94.0);
+    });
+
+    it('should persist rate_limits when subsequent token_count lacks them', () => {
+      parser.convertLine({
+        timestamp: '2025-01-15T10:08:00Z',
+        type: 'event_msg',
+        payload: {
+          type: 'token_count',
+          info: {
+            last_token_usage: { input_tokens: 1000, output_tokens: 200 },
+          },
+          rate_limits: {
+            limit_id: 'codex',
+            primary: { used_percent: 20.0, window_minutes: 300, resets_at: 1771331406 },
+            secondary: { used_percent: 50.0, window_minutes: 10080, resets_at: 1771407310 },
+          },
+        },
+      });
+
+      // Second token_count without rate_limits
+      parser.convertLine({
+        timestamp: '2025-01-15T10:09:00Z',
+        type: 'event_msg',
+        payload: {
+          type: 'token_count',
+          info: {
+            last_token_usage: { input_tokens: 2000, output_tokens: 400 },
+          },
+        },
+      });
+
+      const limits = parser.getLastRateLimits();
+      expect(limits).not.toBeNull();
+      expect(limits!.primary!.used_percent).toBe(20.0);
+    });
+
+    it('should clear rate_limits on reset', () => {
+      parser.convertLine({
+        timestamp: '2025-01-15T10:08:00Z',
+        type: 'event_msg',
+        payload: {
+          type: 'token_count',
+          info: {
+            last_token_usage: { input_tokens: 1000, output_tokens: 200 },
+          },
+          rate_limits: {
+            limit_id: 'codex',
+            primary: { used_percent: 16.0, window_minutes: 300, resets_at: 1771331406 },
+            secondary: { used_percent: 94.0, window_minutes: 10080, resets_at: 1771407310 },
+          },
+        },
+      });
+
+      expect(parser.getLastRateLimits()).not.toBeNull();
+      parser.reset();
+      expect(parser.getLastRateLimits()).toBeNull();
+    });
+  });
+
   // --- Tool name normalization ---
 
   describe('tool name normalization', () => {

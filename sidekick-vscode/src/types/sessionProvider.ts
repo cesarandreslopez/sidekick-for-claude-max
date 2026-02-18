@@ -11,6 +11,7 @@
 
 import type * as vscode from 'vscode';
 import type { ClaudeSessionEvent, ContextAttribution, SubagentStats, TokenUsage } from './claudeSession';
+import type { QuotaState } from './dashboard';
 
 /**
  * Information about a single session file.
@@ -160,4 +161,7 @@ export interface SessionProvider extends vscode.Disposable {
 
   /** Gets context attribution breakdown from provider data, if available. */
   getContextAttribution?(sessionPath: string): ContextAttribution | null;
+
+  /** Gets subscription quota state from session data (e.g., Codex rate_limits). */
+  getQuotaFromSession?(): QuotaState | null;
 }
