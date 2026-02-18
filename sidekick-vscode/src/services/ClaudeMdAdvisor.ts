@@ -11,6 +11,7 @@ import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
 import type { AuthService } from './AuthService';
+import { resolveModel } from './ModelResolver';
 import type { SessionAnalyzer, SessionAnalysisData } from './SessionAnalyzer';
 import { buildClaudeMdAnalysisPrompt, parseClaudeMdSuggestions } from '../utils/analysisPrompts';
 import { log, logError } from './Logger';
@@ -126,8 +127,9 @@ export class ClaudeMdAdvisor {
 
       // 5. Call Claude via AuthService (uses Max subscription with session isolation)
       log('ClaudeMdAdvisor: Calling Claude for analysis');
+      const model = resolveModel('balanced', this.authService.getProviderId(), 'explanationModel');
       const response = await this.authService.complete(prompt, {
-        model: 'sonnet',
+        model,
         timeout: 90000 // 90 second timeout for analysis (more context = more time)
       });
       log(`ClaudeMdAdvisor: Received response (${response.length} chars)`);

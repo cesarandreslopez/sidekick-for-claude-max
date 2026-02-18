@@ -15,6 +15,7 @@ import { ClaudeCodeSessionProvider } from './ClaudeCodeSessionProvider';
 import { OpenCodeSessionProvider } from './OpenCodeSessionProvider';
 import { CodexSessionProvider } from './CodexSessionProvider';
 import type { SessionProvider } from '../../types/sessionProvider';
+import type { InferenceProviderId } from '../../types/inferenceProvider';
 import { log } from '../Logger';
 
 /**
@@ -188,4 +189,44 @@ export function detectProvider(): SessionProvider {
   available.sort((a, b) => b.mtime - a.mtime);
   log(`Session provider: ${available[0].name} (auto-detected, most recent activity)`);
   return available[0].create();
+}
+
+/**
+ * Auto-detects which inference provider to use based on filesystem presence.
+ *
+ * Reuses the same directory/mtime heuristics as session provider detection.
+ * Returns the most recently active provider, defaulting to claude-max.
+ */
+export function detectInferenceProvider(): InferenceProviderId {
+  const openCodeStorage = getOpenCodeStorageDir();
+  const openCodeDbPath = path.join(getOpenCodeDataDir(), 'opencode.db');
+  const claudeBase = path.join(os.homedir(), '.claude', 'projects');
+  const codexHome = getCodexHome();
+  const codexSessionsDir = path.join(codexHome, 'sessions');
+  const codexDbPath = path.join(codexHome, 'state.sqlite');
+
+  const hasOpenCode = fs.existsSync(openCodeStorage) || fs.existsSync(openCodeDbPath);
+  const hasClaude = fs.existsSync(claudeBase);
+  const hasCodex = fs.existsSync(codexSessionsDir) || fs.existsSync(codexDbPath);
+
+  const available: Array<{ id: InferenceProviderId; mtime: number }> = [];
+
+  if (hasClaude) {
+    available.push({ id: 'claude-max', mtime: getMostRecentMtime(claudeBase) });
+  }
+  if (hasOpenCode) {
+    available.push({ id: 'opencode', mtime: getOpenCodeActivityMtime(openCodeStorage) });
+  }
+  if (hasCodex) {
+    available.push({ id: 'codex', mtime: getCodexActivityMtime(codexHome) });
+  }
+
+  if (available.length === 0) {
+    log('Inference provider auto-detect: defaulting to claude-max');
+    return 'claude-max';
+  }
+
+  available.sort((a, b) => b.mtime - a.mtime);
+  log(`Inference provider auto-detect: ${available[0].id} (most recent activity)`);
+  return available[0].id;
 }

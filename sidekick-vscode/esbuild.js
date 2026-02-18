@@ -14,7 +14,7 @@ async function main() {
     sourcesContent: false,
     platform: 'node',
     outfile: 'out/extension.js',
-    external: ['vscode'],
+    external: ['vscode', '@opencode-ai/sdk', '@openai/codex-sdk'],
     logLevel: 'warning',
   });
 

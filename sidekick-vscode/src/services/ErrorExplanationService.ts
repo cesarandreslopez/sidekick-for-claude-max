@@ -9,6 +9,7 @@
 
 import * as vscode from 'vscode';
 import { AuthService } from './AuthService';
+import { resolveModel } from './ModelResolver';
 import { TimeoutManager, getTimeoutManager } from './TimeoutManager';
 import type { ErrorContext, ErrorExplanation, FixSuggestion } from '../types/errorExplanation';
 import type { ComplexityLevel } from '../types/explain';
@@ -51,7 +52,7 @@ export class ErrorExplanationService {
   ): Promise<ErrorExplanation> {
     // Read model from configuration (default: sonnet)
     const config = vscode.workspace.getConfiguration('sidekick');
-    const model = config.get<string>('errorModel') ?? 'sonnet';
+    const model = resolveModel(config.get<string>('errorModel') ?? 'auto', this.authService.getProviderId(), 'errorModel');
 
     // Build prompt for error explanation
     const prompt = getErrorExplanationPrompt(code, errorContext, complexity);
@@ -59,8 +60,9 @@ export class ErrorExplanationService {
     const timeoutConfig = this.timeoutManager.getTimeoutConfig('errorExplanation');
 
     // Execute with timeout management and retry support
+    const opLabel = `Explaining error via ${this.authService.getProviderDisplayName()} · ${model}`;
     const result = await this.timeoutManager.executeWithTimeout({
-      operation: 'Explaining error',
+      operation: opLabel,
       task: (signal: AbortSignal) => this.authService.complete(prompt, {
         model,
         maxTokens: 2000,
@@ -71,7 +73,7 @@ export class ErrorExplanationService {
       showProgress: true,
       cancellable: true,
       onTimeout: (timeoutMs: number, contextKb: number) =>
-        this.timeoutManager.promptRetry('Explaining error', timeoutMs, contextKb),
+        this.timeoutManager.promptRetry(opLabel, timeoutMs, contextKb),
     });
 
     if (result.success && result.result !== undefined) {
@@ -103,7 +105,7 @@ export class ErrorExplanationService {
   ): Promise<FixSuggestion | null> {
     // Read model from configuration (default: sonnet)
     const config = vscode.workspace.getConfiguration('sidekick');
-    const model = config.get<string>('errorModel') ?? 'sonnet';
+    const model = resolveModel(config.get<string>('errorModel') ?? 'auto', this.authService.getProviderId(), 'errorModel');
 
     // Build prompt for fix generation
     const prompt = getErrorFixPrompt(code, errorContext);
@@ -111,8 +113,9 @@ export class ErrorExplanationService {
     const timeoutConfig = this.timeoutManager.getTimeoutConfig('errorExplanation');
 
     // Execute with timeout management and retry support
+    const fixLabel = `Generating fix via ${this.authService.getProviderDisplayName()} · ${model}`;
     const result = await this.timeoutManager.executeWithTimeout({
-      operation: 'Generating fix',
+      operation: fixLabel,
       task: (signal: AbortSignal) => this.authService.complete(prompt, {
         model,
         maxTokens: 2000,
@@ -123,7 +126,7 @@ export class ErrorExplanationService {
       showProgress: true,
       cancellable: true,
       onTimeout: (timeoutMs: number, contextKb: number) =>
-        this.timeoutManager.promptRetry('Generating fix', timeoutMs, contextKb),
+        this.timeoutManager.promptRetry(fixLabel, timeoutMs, contextKb),
     });
 
     if (!result.success) {

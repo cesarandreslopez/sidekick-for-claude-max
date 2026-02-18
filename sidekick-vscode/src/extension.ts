@@ -63,6 +63,8 @@ import {
   getTransformUserPrompt,
   cleanTransformResponse,
 } from "./utils/prompts";
+import { resolveModel } from "./services/ModelResolver";
+import { PROVIDER_DISPLAY_NAMES } from "./types/inferenceProvider";
 
 /** Whether completions are currently enabled */
 let enabled = vscode.workspace.getConfiguration('sidekick').get('enabled', true);
@@ -152,6 +154,37 @@ export async function activate(context: vscode.ExtensionContext) {
   // Initialize auth service
   authService = new AuthService(context);
   context.subscriptions.push(authService);
+
+  // Show active inference provider in status bar
+  statusBarManager.setProvider(PROVIDER_DISPLAY_NAMES[authService.getProviderId()]);
+
+  // Update status bar when inference provider changes
+  context.subscriptions.push(
+    vscode.workspace.onDidChangeConfiguration((e) => {
+      if (e.affectsConfiguration("sidekick.inferenceProvider") || e.affectsConfiguration("sidekick.authMode")) {
+        if (authService && statusBarManager) {
+          statusBarManager.setProvider(PROVIDER_DISPLAY_NAMES[authService.getProviderId()]);
+        }
+      }
+    })
+  );
+
+  // Migrate legacy authMode -> inferenceProvider (one-time)
+  {
+    const cfg = vscode.workspace.getConfiguration('sidekick');
+    const inspected = cfg.inspect<string>('authMode');
+    const authModeExplicit = inspected?.globalValue ?? inspected?.workspaceValue;
+    const providerInspected = cfg.inspect<string>('inferenceProvider');
+    const providerExplicit = providerInspected?.globalValue ?? providerInspected?.workspaceValue;
+
+    if (authModeExplicit === 'api-key' && !providerExplicit) {
+      cfg.update('inferenceProvider', 'claude-api', vscode.ConfigurationTarget.Global).then(() => {
+        vscode.window.showInformationMessage(
+          "Sidekick now supports multiple AI providers. Your Claude API key setup is unchanged."
+        );
+      });
+    }
+  }
 
   // Pre-warm SDK in background (don't await - let activation continue)
   warmupSdk().catch(() => { /* ignored - will retry on first request */ });
@@ -730,11 +763,17 @@ export async function activate(context: vscode.ExtensionContext) {
   // Register status bar menu command
   context.subscriptions.push(
     vscode.commands.registerCommand("sidekick.showMenu", async () => {
-      const items = [
+      const providerName = authService ? PROVIDER_DISPLAY_NAMES[authService.getProviderId()] : 'Claude';
+      const items: Array<{ label: string; description: string; action: string }> = [
         {
           label: enabled ? "$(circle-slash) Disable" : "$(sparkle) Enable",
           description: enabled ? "Turn off inline completions" : "Turn on inline completions",
           action: "toggle",
+        },
+        {
+          label: "$(cloud) Switch Inference Provider",
+          description: `Current: ${providerName}`,
+          action: "switchProvider",
         },
         {
           label: "$(gear) Configure Extension",
@@ -748,15 +787,19 @@ export async function activate(context: vscode.ExtensionContext) {
         },
         {
           label: "$(plug) Test Connection",
-          description: "Verify Claude API connection",
+          description: "Verify provider connection",
           action: "test",
         },
-        {
+      ];
+
+      // Only show Set API Key when using claude-api provider
+      if (authService?.getProviderId() === 'claude-api') {
+        items.push({
           label: "$(key) Set API Key",
           description: "Configure Anthropic API key",
           action: "apiKey",
-        },
-      ];
+        });
+      }
 
       const selected = await vscode.window.showQuickPick(items, {
         placeHolder: "Sidekick Options",
@@ -766,6 +809,9 @@ export async function activate(context: vscode.ExtensionContext) {
         switch (selected.action) {
           case "toggle":
             vscode.commands.executeCommand("sidekick.toggle");
+            break;
+          case "switchProvider":
+            vscode.commands.executeCommand("sidekick.setInferenceProvider");
             break;
           case "configure":
             vscode.commands.executeCommand("workbench.action.openSettings", "sidekick");
@@ -780,6 +826,35 @@ export async function activate(context: vscode.ExtensionContext) {
             vscode.commands.executeCommand("sidekick.setApiKey");
             break;
         }
+      }
+    })
+  );
+
+  // Register switch inference provider command
+  context.subscriptions.push(
+    vscode.commands.registerCommand("sidekick.setInferenceProvider", async () => {
+      const current = authService?.getProviderId() ?? 'claude-max';
+      const providers: Array<{ label: string; description: string; id: string }> = [
+        { label: "$(sparkle) Claude (Max Subscription)", description: "Uses Claude Code CLI — no extra API cost", id: "claude-max" },
+        { label: "$(key) Claude (API Key)", description: "Direct Anthropic API — per-token billing", id: "claude-api" },
+        { label: "$(cloud) OpenCode", description: "Uses your configured OpenCode model/provider", id: "opencode" },
+        { label: "$(terminal) Codex CLI", description: "Uses OpenAI API", id: "codex" },
+        { label: "$(search) Auto-Detect", description: "Detect most recently used agent", id: "auto" },
+      ];
+
+      // Mark current provider
+      for (const p of providers) {
+        if (p.id === current || (current === 'claude-max' && p.id === 'auto' && !vscode.workspace.getConfiguration('sidekick').get('inferenceProvider'))) {
+          p.description += " (current)";
+        }
+      }
+
+      const selected = await vscode.window.showQuickPick(providers, {
+        placeHolder: "Select inference provider",
+      });
+
+      if (selected) {
+        await vscode.workspace.getConfiguration('sidekick').update('inferenceProvider', selected.id, vscode.ConfigurationTarget.Global);
       }
     })
   );
@@ -1075,7 +1150,7 @@ export async function activate(context: vscode.ExtensionContext) {
 
         const language = editor.document.languageId;
         const config = vscode.workspace.getConfiguration("sidekick");
-        const model = config.get<string>("transformModel") ?? "opus";
+        const model = resolveModel(config.get<string>("transformModel") ?? "auto", authService!.getProviderId(), "transformModel");
         const contextLines = config.get<number>("transformContextLines") ?? 50;
 
         // Get context before selection
@@ -1122,8 +1197,9 @@ export async function activate(context: vscode.ExtensionContext) {
           const timeoutConfig = timeoutManager.getTimeoutConfig('codeTransform');
 
           // Execute with timeout management and retry support
+          const operationLabel = `Transforming code via ${authService!.getProviderDisplayName()} · ${model}`;
           const result = await timeoutManager.executeWithTimeout({
-            operation: 'Transforming code',
+            operation: operationLabel,
             task: (signal: AbortSignal) => authService!.complete(prompt, {
               model,
               maxTokens: 4096,
@@ -1134,7 +1210,7 @@ export async function activate(context: vscode.ExtensionContext) {
             showProgress: true,
             cancellable: true,
             onTimeout: (timeoutMs: number, contextKb: number) =>
-              timeoutManager.promptRetry('Transforming code', timeoutMs, contextKb),
+              timeoutManager.promptRetry(operationLabel, timeoutMs, contextKb),
           });
 
           if (!result.success) {

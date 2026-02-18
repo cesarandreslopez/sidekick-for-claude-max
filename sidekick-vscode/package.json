@@ -52,403 +52,415 @@
   ],
   "main": "./out/extension.js",
   "contributes": {
-    "configuration": {
-      "title": "Sidekick for Max",
-      "properties": {
-        "sidekick.authMode": {
-          "type": "string",
-          "enum": [
-            "api-key",
-            "max-subscription"
-          ],
-          "default": "max-subscription",
-          "description": "Authentication mode for Claude API",
-          "enumDescriptions": [
-            "Use an Anthropic API key (requires ANTHROPIC_API_KEY env var or configured key)",
-            "Use Claude Max subscription (requires Claude Code CLI installed and authenticated)"
-          ]
-        },
-        "sidekick.enabled": {
-          "type": "boolean",
-          "default": true,
-          "description": "Enable/disable inline completions"
-        },
-        "sidekick.debounceMs": {
-          "type": "number",
-          "default": 1000,
-          "description": "Debounce delay in milliseconds before requesting completion"
-        },
-        "sidekick.inlineTimeout": {
-          "type": "number",
-          "default": 15000,
-          "minimum": 5000,
-          "maximum": 120000,
-          "description": "Timeout in milliseconds for inline completions. Increase if you frequently get timeouts (default: 15000ms = 15s)"
-        },
-        "sidekick.inlineContextLines": {
-          "type": "number",
-          "default": 30,
-          "description": "Lines of context before/after cursor for inline completions"
-        },
-        "sidekick.transformContextLines": {
-          "type": "number",
-          "default": 50,
-          "description": "Lines of context before/after selection for transforms"
-        },
-        "sidekick.multiline": {
-          "type": "boolean",
-          "default": false,
-          "description": "Enable multi-line completions (up to 10 lines). When disabled, completions are limited to 1-3 lines. Note: Prose files (Markdown, plaintext, etc.) always use multiline mode."
-        },
-        "sidekick.inlineModel": {
-          "type": "string",
-          "enum": [
-            "haiku",
-            "sonnet",
-            "opus"
-          ],
-          "default": "haiku",
-          "description": "Model for inline completions (haiku=fast, sonnet=balanced, opus=quality)",
-          "enumDescriptions": [
-            "Claude Haiku - Fastest completions (recommended for inline)",
-            "Claude Sonnet - Balanced speed and quality",
-            "Claude Opus - Highest quality, slower"
-          ]
-        },
-        "sidekick.transformModel": {
-          "type": "string",
-          "enum": [
-            "haiku",
-            "sonnet",
-            "opus"
-          ],
-          "default": "opus",
-          "description": "Model for code transformations (opus=highest quality, sonnet=balanced, haiku=fast)",
-          "enumDescriptions": [
-            "Claude Haiku - Fastest, lower quality",
-            "Claude Sonnet - Balanced speed and quality",
-            "Claude Opus - Highest quality (recommended for transforms)"
-          ]
-        },
-        "sidekick.commitMessageModel": {
-          "type": "string",
-          "enum": [
-            "haiku",
-            "sonnet",
-            "opus"
-          ],
-          "default": "sonnet",
-          "description": "Model for commit message generation (haiku=fast, sonnet=balanced, opus=quality)",
-          "enumDescriptions": [
-            "Claude Haiku - Fastest, lower quality",
-            "Claude Sonnet - Balanced speed and quality (recommended)",
-            "Claude Opus - Highest quality, slower"
-          ]
-        },
-        "sidekick.docModel": {
-          "type": "string",
-          "enum": [
-            "haiku",
-            "sonnet",
-            "opus"
-          ],
-          "default": "haiku",
-          "description": "Model for documentation generation (haiku=fast, sonnet=balanced, opus=quality)",
-          "enumDescriptions": [
-            "Claude Haiku - Fastest (recommended for documentation)",
-            "Claude Sonnet - Balanced speed and quality",
-            "Claude Opus - Highest quality, slower"
-          ]
-        },
-        "sidekick.explainModel": {
-          "type": "string",
-          "enum": [
-            "haiku",
-            "sonnet",
-            "opus"
-          ],
-          "default": "sonnet",
-          "description": "Model for code explanations (sonnet=recommended for quality)",
-          "enumDescriptions": [
-            "Claude Haiku - Fastest, lower quality",
-            "Claude Sonnet - Balanced speed and quality (recommended)",
-            "Claude Opus - Highest quality, slower"
-          ]
-        },
-        "sidekick.errorModel": {
-          "type": "string",
-          "enum": [
-            "haiku",
-            "sonnet",
-            "opus"
-          ],
-          "default": "sonnet",
-          "description": "Model for error explanations and fixes (sonnet=recommended for accuracy)",
-          "enumDescriptions": [
-            "Claude Haiku - Fastest, lower quality",
-            "Claude Sonnet - Balanced speed and quality (recommended)",
-            "Claude Opus - Highest quality, slower"
-          ]
-        },
-        "sidekick.inlineChatModel": {
-          "type": "string",
-          "enum": [
-            "haiku",
-            "sonnet",
-            "opus"
-          ],
-          "default": "sonnet",
-          "description": "Model for inline chat / quick ask (sonnet=recommended for balance)",
-          "enumDescriptions": [
-            "Claude Haiku - Fastest, lower quality",
-            "Claude Sonnet - Balanced speed and quality (recommended)",
-            "Claude Opus - Highest quality, slower"
-          ]
-        },
-        "sidekick.reviewModel": {
-          "type": "string",
-          "enum": [
-            "haiku",
-            "sonnet",
-            "opus"
-          ],
-          "default": "sonnet",
-          "description": "Model for pre-commit code review (sonnet=recommended for thoroughness)",
-          "enumDescriptions": [
-            "Claude Haiku - Fastest, lower quality",
-            "Claude Sonnet - Balanced speed and quality (recommended)",
-            "Claude Opus - Highest quality, slower"
-          ]
-        },
-        "sidekick.prDescriptionModel": {
-          "type": "string",
-          "enum": [
-            "haiku",
-            "sonnet",
-            "opus"
-          ],
-          "default": "sonnet",
-          "description": "Model for PR description generation (sonnet=recommended for quality)",
-          "enumDescriptions": [
-            "Claude Haiku - Fastest, lower quality",
-            "Claude Sonnet - Balanced speed and quality (recommended)",
-            "Claude Opus - Highest quality, slower"
-          ]
-        },
-        "sidekick.commitMessageGuidance": {
-          "type": "string",
-          "default": "",
-          "description": "Default guidance for commit message generation. Applied to all commits (e.g., 'keep it short', 'always mention ticket numbers', 'use past tense')"
-        },
-        "sidekick.claudePath": {
-          "type": "string",
-          "default": "",
-          "description": "Custom path to the Claude CLI executable. Leave empty to auto-detect. Useful when claude is installed via pnpm or in a non-standard location."
-        },
-        "sidekick.showCommitButton": {
-          "type": "boolean",
-          "default": true,
-          "description": "Show AI commit message button in Source Control toolbar"
-        },
-        "sidekick.commitMessageStyle": {
-          "type": "string",
-          "enum": [
-            "conventional",
-            "simple"
-          ],
-          "default": "conventional",
-          "markdownEnumDescriptions": [
-            "**Conventional Commits** - Structured format: `type(scope): description` (e.g., `feat(auth): add OAuth2 support`)",
-            "**Simple Description** - Plain imperative description (e.g., `Add OAuth2 authentication support`)"
-          ],
-          "description": "Format style for AI-generated commit messages"
-        },
-        "sidekick.explanationComplexity": {
-          "type": "string",
-          "enum": [
-            "eli5",
-            "curious-amateur",
-            "imposter-syndrome",
-            "senior",
-            "phd"
-          ],
-          "default": "imposter-syndrome",
-          "description": "Explanation complexity level for Explain-First mode",
-          "enumDescriptions": [
-            "ELI5 - Explain for complete beginners",
-            "Curious Amateur - Explain for someone learning",
-            "Imposter Syndrome - Fill knowledge gaps for partial understanding",
-            "Senior - Summarize key points for experienced readers",
-            "PhD Mode - Expert-level analysis without simplification"
-          ]
-        },
-        "sidekick.explanationModel": {
-          "type": "string",
-          "enum": [
-            "haiku",
-            "sonnet",
-            "opus"
-          ],
-          "default": "sonnet",
-          "description": "Model for generating explanations (sonnet=recommended)",
-          "enumDescriptions": [
-            "Claude Haiku - Fastest, lower quality",
-            "Claude Sonnet - Balanced speed and quality (recommended)",
-            "Claude Opus - Highest quality, slower"
-          ]
-        },
-        "sidekick.showCompletionHint": {
-          "type": "boolean",
-          "default": true,
-          "description": "Show visual hint at cursor suggesting AI completion shortcut after typing stops"
-        },
-        "sidekick.completionHintDelayMs": {
-          "type": "number",
-          "default": 1500,
-          "description": "Delay in milliseconds after typing stops before showing completion hint"
-        },
-        "sidekick.enableSessionMonitoring": {
-          "type": "boolean",
-          "default": true,
-          "description": "Enable CLI agent session monitoring for token usage tracking"
-        },
-        "sidekick.sessionProvider": {
-          "type": "string",
-          "default": "auto",
-          "enum": [
-            "auto",
-            "claude-code",
-            "opencode",
-            "codex"
-          ],
-          "enumDescriptions": [
-            "Auto-detect based on installed CLI agents",
-            "Monitor Claude Code sessions (~/.claude/projects/)",
-            "Monitor OpenCode sessions (~/.local/share/opencode/)",
-            "Monitor Codex CLI sessions (~/.codex/sessions/)"
-          ],
-          "description": "Which CLI coding agent to monitor. 'auto' detects based on installed tools and recent activity."
-        },
-        "sidekick.notifications.enabled": {
-          "type": "boolean",
-          "default": true,
-          "description": "Enable session monitoring notifications (credential access, destructive commands, compaction, etc.)"
-        },
-        "sidekick.notifications.triggers.env-access": {
-          "type": "boolean",
-          "default": true,
-          "description": "Notify when Claude accesses credential files (.env, .pem, .key, etc.)"
-        },
-        "sidekick.notifications.triggers.destructive-cmd": {
-          "type": "boolean",
-          "default": true,
-          "description": "Notify when Claude runs destructive commands (rm -rf, git push --force, etc.)"
-        },
-        "sidekick.notifications.triggers.tool-error": {
-          "type": "boolean",
-          "default": true,
-          "description": "Notify when Claude encounters multiple consecutive tool errors"
-        },
-        "sidekick.notifications.triggers.compaction": {
-          "type": "boolean",
-          "default": true,
-          "description": "Notify when context window is compacted (conversation summarized)"
-        },
-        "sidekick.notifications.tokenThreshold": {
-          "type": "number",
-          "default": 500000,
-          "minimum": 0,
-          "description": "Show a warning when session token usage crosses this threshold (0 to disable). Warns at each multiple."
-        },
-        "sidekick.timeouts": {
-          "type": "object",
-          "default": {
-            "inlineCompletion": 15000,
-            "explanation": 30000,
-            "commitMessage": 30000,
-            "documentation": 45000,
-            "codeTransform": 60000,
-            "review": 45000,
-            "prDescription": 45000,
-            "inlineChat": 60000,
-            "errorExplanation": 30000
+    "configuration": [
+      {
+        "title": "Provider",
+        "order": 0,
+        "properties": {
+          "sidekick.inferenceProvider": {
+            "type": "string",
+            "enum": ["auto", "claude-max", "claude-api", "opencode", "codex"],
+            "default": "auto",
+            "description": "AI provider for inference features (completions, transforms, explanations). 'auto' detects the most recently used coding agent.",
+            "enumDescriptions": [
+              "Auto-detect based on installed agents",
+              "Claude via Max subscription (uses Claude Code CLI, no extra API cost)",
+              "Claude via Anthropic API key (per-token billing)",
+              "OpenCode (uses your configured OpenCode model/provider)",
+              "Codex CLI (uses OpenAI API)"
+            ]
           },
-          "description": "Timeout settings per operation type (milliseconds). Increase these values if you frequently experience timeouts.",
-          "properties": {
-            "inlineCompletion": {
-              "type": "number",
-              "description": "Timeout for inline code completions"
-            },
-            "explanation": {
-              "type": "number",
-              "description": "Timeout for explanations"
-            },
-            "commitMessage": {
-              "type": "number",
-              "description": "Timeout for commit message generation"
-            },
-            "documentation": {
-              "type": "number",
-              "description": "Timeout for documentation generation"
-            },
-            "codeTransform": {
-              "type": "number",
-              "description": "Timeout for code transformations"
-            },
-            "review": {
-              "type": "number",
-              "description": "Timeout for pre-commit review"
-            },
-            "prDescription": {
-              "type": "number",
-              "description": "Timeout for PR description generation"
-            },
-            "inlineChat": {
-              "type": "number",
-              "description": "Timeout for inline chat / quick ask"
-            },
-            "errorExplanation": {
-              "type": "number",
-              "description": "Timeout for error explanations"
-            }
+          "sidekick.claudePath": {
+            "type": "string",
+            "default": "",
+            "description": "Custom path to the Claude CLI executable. Leave empty to auto-detect. Useful when claude is installed via pnpm or in a non-standard location."
           }
-        },
-        "sidekick.timeoutPerKb": {
-          "type": "number",
-          "default": 500,
-          "minimum": 0,
-          "maximum": 5000,
-          "description": "Additional timeout per KB of context (milliseconds). Larger contexts get proportionally longer timeouts."
-        },
-        "sidekick.maxTimeout": {
-          "type": "number",
-          "default": 120000,
-          "minimum": 30000,
-          "maximum": 300000,
-          "description": "Maximum timeout cap (milliseconds). No operation will wait longer than this."
-        },
-        "sidekick.autoRetryOnTimeout": {
-          "type": "boolean",
-          "default": false,
-          "description": "Automatically retry with a longer timeout when an operation times out (instead of prompting user)"
-        },
-        "sidekick.enableEventLog": {
-          "type": "boolean",
-          "default": false,
-          "description": "Record all session events to ~/.config/sidekick/event-logs/ as a JSONL audit trail for debugging."
-        },
-        "sidekick.eventLogMaxSizeMB": {
-          "type": "number",
-          "default": 500,
-          "description": "Maximum total size of event log files before oldest are cleaned up."
-        },
-        "sidekick.eventLogMaxAgeDays": {
-          "type": "number",
-          "default": 30,
-          "description": "Maximum age in days for event log files before cleanup."
+        }
+      },
+      {
+        "title": "Model Selection",
+        "order": 1,
+        "properties": {
+          "sidekick.inlineModel": {
+            "type": "string",
+            "enum": ["auto", "fast", "balanced", "powerful", "haiku", "sonnet", "opus"],
+            "default": "auto",
+            "description": "Model for inline completions. Use 'auto' (recommended), a tier (fast/balanced/powerful), a legacy name (haiku/sonnet/opus), or an exact model ID.",
+            "enumDescriptions": [
+              "Auto - uses the recommended tier for this feature (fast)",
+              "Fast - lowest latency model for the active provider",
+              "Balanced - quality/speed tradeoff",
+              "Powerful - highest quality, higher latency",
+              "Claude Haiku (alias for 'fast')",
+              "Claude Sonnet (alias for 'balanced')",
+              "Claude Opus (alias for 'powerful')"
+            ]
+          },
+          "sidekick.transformModel": {
+            "type": "string",
+            "enum": ["auto", "fast", "balanced", "powerful", "haiku", "sonnet", "opus"],
+            "default": "auto",
+            "description": "Model for code transformations. Use 'auto' (recommended), a tier, a legacy name, or an exact model ID.",
+            "enumDescriptions": [
+              "Auto - uses the recommended tier for this feature (powerful)",
+              "Fast - lowest latency model for the active provider",
+              "Balanced - quality/speed tradeoff",
+              "Powerful - highest quality, higher latency",
+              "Claude Haiku (alias for 'fast')",
+              "Claude Sonnet (alias for 'balanced')",
+              "Claude Opus (alias for 'powerful')"
+            ]
+          },
+          "sidekick.commitMessageModel": {
+            "type": "string",
+            "enum": ["auto", "fast", "balanced", "powerful", "haiku", "sonnet", "opus"],
+            "default": "auto",
+            "description": "Model for commit message generation. Use 'auto' (recommended), a tier, a legacy name, or an exact model ID.",
+            "enumDescriptions": [
+              "Auto - uses the recommended tier for this feature (balanced)",
+              "Fast - lowest latency model for the active provider",
+              "Balanced - quality/speed tradeoff",
+              "Powerful - highest quality, higher latency",
+              "Claude Haiku (alias for 'fast')",
+              "Claude Sonnet (alias for 'balanced')",
+              "Claude Opus (alias for 'powerful')"
+            ]
+          },
+          "sidekick.docModel": {
+            "type": "string",
+            "enum": ["auto", "fast", "balanced", "powerful", "haiku", "sonnet", "opus"],
+            "default": "auto",
+            "description": "Model for documentation generation. Use 'auto' (recommended), a tier, a legacy name, or an exact model ID.",
+            "enumDescriptions": [
+              "Auto - uses the recommended tier for this feature (fast)",
+              "Fast - lowest latency model for the active provider",
+              "Balanced - quality/speed tradeoff",
+              "Powerful - highest quality, higher latency",
+              "Claude Haiku (alias for 'fast')",
+              "Claude Sonnet (alias for 'balanced')",
+              "Claude Opus (alias for 'powerful')"
+            ]
+          },
+          "sidekick.explanationModel": {
+            "type": "string",
+            "enum": ["auto", "fast", "balanced", "powerful", "haiku", "sonnet", "opus"],
+            "default": "auto",
+            "description": "Model for generating explanations. Use 'auto' (recommended), a tier, a legacy name, or an exact model ID.",
+            "enumDescriptions": [
+              "Auto - uses the recommended tier for this feature (balanced)",
+              "Fast - lowest latency model for the active provider",
+              "Balanced - quality/speed tradeoff",
+              "Powerful - highest quality, higher latency",
+              "Claude Haiku (alias for 'fast')",
+              "Claude Sonnet (alias for 'balanced')",
+              "Claude Opus (alias for 'powerful')"
+            ]
+          },
+          "sidekick.errorModel": {
+            "type": "string",
+            "enum": ["auto", "fast", "balanced", "powerful", "haiku", "sonnet", "opus"],
+            "default": "auto",
+            "description": "Model for error explanations and fixes. Use 'auto' (recommended), a tier, a legacy name, or an exact model ID.",
+            "enumDescriptions": [
+              "Auto - uses the recommended tier for this feature (balanced)",
+              "Fast - lowest latency model for the active provider",
+              "Balanced - quality/speed tradeoff",
+              "Powerful - highest quality, higher latency",
+              "Claude Haiku (alias for 'fast')",
+              "Claude Sonnet (alias for 'balanced')",
+              "Claude Opus (alias for 'powerful')"
+            ]
+          },
+          "sidekick.inlineChatModel": {
+            "type": "string",
+            "enum": ["auto", "fast", "balanced", "powerful", "haiku", "sonnet", "opus"],
+            "default": "auto",
+            "description": "Model for inline chat / quick ask. Use 'auto' (recommended), a tier, a legacy name, or an exact model ID.",
+            "enumDescriptions": [
+              "Auto - uses the recommended tier for this feature (balanced)",
+              "Fast - lowest latency model for the active provider",
+              "Balanced - quality/speed tradeoff",
+              "Powerful - highest quality, higher latency",
+              "Claude Haiku (alias for 'fast')",
+              "Claude Sonnet (alias for 'balanced')",
+              "Claude Opus (alias for 'powerful')"
+            ]
+          },
+          "sidekick.reviewModel": {
+            "type": "string",
+            "enum": ["auto", "fast", "balanced", "powerful", "haiku", "sonnet", "opus"],
+            "default": "auto",
+            "description": "Model for pre-commit code review. Use 'auto' (recommended), a tier, a legacy name, or an exact model ID.",
+            "enumDescriptions": [
+              "Auto - uses the recommended tier for this feature (balanced)",
+              "Fast - lowest latency model for the active provider",
+              "Balanced - quality/speed tradeoff",
+              "Powerful - highest quality, higher latency",
+              "Claude Haiku (alias for 'fast')",
+              "Claude Sonnet (alias for 'balanced')",
+              "Claude Opus (alias for 'powerful')"
+            ]
+          },
+          "sidekick.prDescriptionModel": {
+            "type": "string",
+            "enum": ["auto", "fast", "balanced", "powerful", "haiku", "sonnet", "opus"],
+            "default": "auto",
+            "description": "Model for PR description generation. Use 'auto' (recommended), a tier, a legacy name, or an exact model ID.",
+            "enumDescriptions": [
+              "Auto - uses the recommended tier for this feature (balanced)",
+              "Fast - lowest latency model for the active provider",
+              "Balanced - quality/speed tradeoff",
+              "Powerful - highest quality, higher latency",
+              "Claude Haiku (alias for 'fast')",
+              "Claude Sonnet (alias for 'balanced')",
+              "Claude Opus (alias for 'powerful')"
+            ]
+          }
+        }
+      },
+      {
+        "title": "Inline Completions",
+        "order": 2,
+        "properties": {
+          "sidekick.enabled": {
+            "type": "boolean",
+            "default": true,
+            "description": "Enable/disable inline completions"
+          },
+          "sidekick.debounceMs": {
+            "type": "number",
+            "default": 1000,
+            "description": "Debounce delay in milliseconds before requesting completion"
+          },
+          "sidekick.inlineContextLines": {
+            "type": "number",
+            "default": 30,
+            "description": "Lines of context before/after cursor for inline completions"
+          },
+          "sidekick.inlineTimeout": {
+            "type": "number",
+            "default": 15000,
+            "minimum": 5000,
+            "maximum": 120000,
+            "description": "Timeout in milliseconds for inline completions. Increase if you frequently get timeouts (default: 15000ms = 15s)"
+          },
+          "sidekick.multiline": {
+            "type": "boolean",
+            "default": false,
+            "description": "Enable multi-line completions (up to 10 lines). When disabled, completions are limited to 1-3 lines. Note: Prose files (Markdown, plaintext, etc.) always use multiline mode."
+          },
+          "sidekick.transformContextLines": {
+            "type": "number",
+            "default": 50,
+            "description": "Lines of context before/after selection for transforms"
+          },
+          "sidekick.showCompletionHint": {
+            "type": "boolean",
+            "default": true,
+            "description": "Show visual hint at cursor suggesting AI completion shortcut after typing stops"
+          },
+          "sidekick.completionHintDelayMs": {
+            "type": "number",
+            "default": 1500,
+            "description": "Delay in milliseconds after typing stops before showing completion hint"
+          }
+        }
+      },
+      {
+        "title": "Session Monitoring",
+        "order": 3,
+        "properties": {
+          "sidekick.enableSessionMonitoring": {
+            "type": "boolean",
+            "default": true,
+            "description": "Enable CLI agent session monitoring for token usage tracking"
+          },
+          "sidekick.sessionProvider": {
+            "type": "string",
+            "default": "auto",
+            "enum": ["auto", "claude-code", "opencode", "codex"],
+            "enumDescriptions": [
+              "Auto-detect based on installed CLI agents",
+              "Monitor Claude Code sessions (~/.claude/projects/)",
+              "Monitor OpenCode sessions (~/.local/share/opencode/)",
+              "Monitor Codex CLI sessions (~/.codex/sessions/)"
+            ],
+            "description": "Which CLI coding agent to monitor. 'auto' detects based on installed tools and recent activity."
+          }
+        }
+      },
+      {
+        "title": "Commit Messages",
+        "order": 4,
+        "properties": {
+          "sidekick.commitMessageStyle": {
+            "type": "string",
+            "enum": ["conventional", "simple"],
+            "default": "conventional",
+            "markdownEnumDescriptions": [
+              "**Conventional Commits** - Structured format: `type(scope): description` (e.g., `feat(auth): add OAuth2 support`)",
+              "**Simple Description** - Plain imperative description (e.g., `Add OAuth2 authentication support`)"
+            ],
+            "description": "Format style for AI-generated commit messages"
+          },
+          "sidekick.commitMessageGuidance": {
+            "type": "string",
+            "default": "",
+            "description": "Default guidance for commit message generation. Applied to all commits (e.g., 'keep it short', 'always mention ticket numbers', 'use past tense')"
+          },
+          "sidekick.showCommitButton": {
+            "type": "boolean",
+            "default": true,
+            "description": "Show AI commit message button in Source Control toolbar"
+          }
+        }
+      },
+      {
+        "title": "Explanations",
+        "order": 5,
+        "properties": {
+          "sidekick.explanationComplexity": {
+            "type": "string",
+            "enum": ["eli5", "curious-amateur", "imposter-syndrome", "senior", "phd"],
+            "default": "imposter-syndrome",
+            "description": "Explanation complexity level for Explain-First mode",
+            "enumDescriptions": [
+              "ELI5 - Explain for complete beginners",
+              "Curious Amateur - Explain for someone learning",
+              "Imposter Syndrome - Fill knowledge gaps for partial understanding",
+              "Senior - Summarize key points for experienced readers",
+              "PhD Mode - Expert-level analysis without simplification"
+            ]
+          }
+        }
+      },
+      {
+        "title": "Notifications",
+        "order": 6,
+        "properties": {
+          "sidekick.notifications.enabled": {
+            "type": "boolean",
+            "default": true,
+            "description": "Enable session monitoring notifications (credential access, destructive commands, compaction, etc.)"
+          },
+          "sidekick.notifications.triggers.env-access": {
+            "type": "boolean",
+            "default": true,
+            "description": "Notify when Claude accesses credential files (.env, .pem, .key, etc.)"
+          },
+          "sidekick.notifications.triggers.destructive-cmd": {
+            "type": "boolean",
+            "default": true,
+            "description": "Notify when Claude runs destructive commands (rm -rf, git push --force, etc.)"
+          },
+          "sidekick.notifications.triggers.tool-error": {
+            "type": "boolean",
+            "default": true,
+            "description": "Notify when Claude encounters multiple consecutive tool errors"
+          },
+          "sidekick.notifications.triggers.compaction": {
+            "type": "boolean",
+            "default": true,
+            "description": "Notify when context window is compacted (conversation summarized)"
+          },
+          "sidekick.notifications.tokenThreshold": {
+            "type": "number",
+            "default": 500000,
+            "minimum": 0,
+            "description": "Show a warning when session token usage crosses this threshold (0 to disable). Warns at each multiple."
+          }
+        }
+      },
+      {
+        "title": "Timeouts",
+        "order": 7,
+        "properties": {
+          "sidekick.timeouts": {
+            "type": "object",
+            "default": {
+              "inlineCompletion": 15000,
+              "explanation": 30000,
+              "commitMessage": 30000,
+              "documentation": 45000,
+              "codeTransform": 60000,
+              "review": 45000,
+              "prDescription": 45000,
+              "inlineChat": 60000,
+              "errorExplanation": 30000
+            },
+            "description": "Timeout settings per operation type (milliseconds). Increase these values if you frequently experience timeouts.",
+            "properties": {
+              "inlineCompletion": { "type": "number", "description": "Timeout for inline code completions" },
+              "explanation": { "type": "number", "description": "Timeout for explanations" },
+              "commitMessage": { "type": "number", "description": "Timeout for commit message generation" },
+              "documentation": { "type": "number", "description": "Timeout for documentation generation" },
+              "codeTransform": { "type": "number", "description": "Timeout for code transformations" },
+              "review": { "type": "number", "description": "Timeout for pre-commit review" },
+              "prDescription": { "type": "number", "description": "Timeout for PR description generation" },
+              "inlineChat": { "type": "number", "description": "Timeout for inline chat / quick ask" },
+              "errorExplanation": { "type": "number", "description": "Timeout for error explanations" }
+            }
+          },
+          "sidekick.timeoutPerKb": {
+            "type": "number",
+            "default": 500,
+            "minimum": 0,
+            "maximum": 5000,
+            "description": "Additional timeout per KB of context (milliseconds). Larger contexts get proportionally longer timeouts."
+          },
+          "sidekick.maxTimeout": {
+            "type": "number",
+            "default": 120000,
+            "minimum": 30000,
+            "maximum": 300000,
+            "description": "Maximum timeout cap (milliseconds). No operation will wait longer than this."
+          },
+          "sidekick.autoRetryOnTimeout": {
+            "type": "boolean",
+            "default": false,
+            "description": "Automatically retry with a longer timeout when an operation times out (instead of prompting user)"
+          }
+        }
+      },
+      {
+        "title": "Event Logging",
+        "order": 8,
+        "properties": {
+          "sidekick.enableEventLog": {
+            "type": "boolean",
+            "default": false,
+            "description": "Record all session events to ~/.config/sidekick/event-logs/ as a JSONL audit trail for debugging."
+          },
+          "sidekick.eventLogMaxSizeMB": {
+            "type": "number",
+            "default": 500,
+            "description": "Maximum total size of event log files before oldest are cleaned up."
+          },
+          "sidekick.eventLogMaxAgeDays": {
+            "type": "number",
+            "default": 30,
+            "description": "Maximum age in days for event log files before cleanup."
+          }
+        }
+      },
+      {
+        "title": "Advanced (Deprecated)",
+        "order": 9,
+        "properties": {
+          "sidekick.authMode": {
+            "type": "string",
+            "enum": ["api-key", "max-subscription"],
+            "default": "max-subscription",
+            "description": "Authentication mode for Claude API",
+            "deprecationMessage": "Use 'sidekick.inferenceProvider' instead. 'max-subscription' maps to 'claude-max', 'api-key' maps to 'claude-api'.",
+            "enumDescriptions": [
+              "Use an Anthropic API key (requires ANTHROPIC_API_KEY env var or configured key)",
+              "Use Claude Max subscription (requires Claude Code CLI installed and authenticated)"
+            ]
+          }
         }
       }
-    },
+    ],
     "commands": [
       {
         "command": "sidekick.toggle",
@@ -610,6 +622,10 @@
         "command": "sidekick.generateSessionSummary",
         "title": "Sidekick: Generate Session Summary",
         "icon": "$(notebook)"
+      },
+      {
+        "command": "sidekick.setInferenceProvider",
+        "title": "Sidekick: Switch Inference Provider"
       }
     ],
     "submenus": [
@@ -764,7 +780,7 @@
       "activitybar": [
         {
           "id": "sidekick-monitor",
-          "title": "Session Monitor",
+          "title": "Agent Hub",
           "icon": "images/icon.png"
         }
       ]
@@ -823,5 +839,9 @@
     "@anthropic-ai/sdk": "^0.71.2",
     "dompurify": "^3.0.0",
     "marked": "^12.0.0"
+  },
+  "optionalDependencies": {
+    "@opencode-ai/sdk": "^1.2.0",
+    "@openai/codex-sdk": "^0.1.0"
   }
 }

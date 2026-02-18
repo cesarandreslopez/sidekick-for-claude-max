@@ -11,6 +11,7 @@ import type { SessionStats, TaskState, ToolCall } from '../types/claudeSession';
 import type { SessionAnalysisData } from './SessionAnalyzer';
 import type { QuotaState } from '../types/dashboard';
 import type { AuthService } from './AuthService';
+import { resolveModel } from './ModelResolver';
 import type { BurnRateCalculator } from './BurnRateCalculator';
 import type {
   SessionSummaryData,
@@ -310,7 +311,8 @@ export class SessionSummaryService {
    */
   async generateNarrative(summary: SessionSummaryData, authService: AuthService): Promise<string> {
     const prompt = buildNarrativePrompt(summary);
-    return authService.complete(prompt, { model: 'haiku', maxTokens: 1024 });
+    const model = resolveModel('fast', authService.getProviderId(), 'inlineModel');
+    return authService.complete(prompt, { model, maxTokens: 1024 });
   }
 
   // ── Private helpers ──

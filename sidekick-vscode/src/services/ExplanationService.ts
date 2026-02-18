@@ -9,6 +9,7 @@
 
 import * as vscode from 'vscode';
 import { AuthService } from './AuthService';
+import { resolveModel } from './ModelResolver';
 import { TimeoutManager, getTimeoutManager } from './TimeoutManager';
 import type { ContentType, ComplexityLevel } from '../types/explain';
 
@@ -53,7 +54,7 @@ export class ExplanationService {
   ): Promise<string> {
     // Read model from configuration (default: sonnet)
     const config = vscode.workspace.getConfiguration('sidekick');
-    const model = config.get<string>('explanationModel') ?? 'sonnet';
+    const model = resolveModel(config.get<string>('explanationModel') ?? 'auto', this.authService.getProviderId(), 'explanationModel');
 
     // Build adaptive prompt
     const prompt = this.buildPrompt(text, contentType, complexity, fileContext, extraInstructions);
@@ -63,8 +64,9 @@ export class ExplanationService {
     const timeoutConfig = this.timeoutManager.getTimeoutConfig('explanation');
 
     // Execute with timeout management and retry support
+    const opLabel = `Generating explanation via ${this.authService.getProviderDisplayName()} · ${model}`;
     const result = await this.timeoutManager.executeWithTimeout({
-      operation: 'Generating explanation',
+      operation: opLabel,
       task: (signal: AbortSignal) => this.authService.complete(prompt, {
         model,
         maxTokens: 2000,
@@ -75,7 +77,7 @@ export class ExplanationService {
       showProgress: true,
       cancellable: true,
       onTimeout: (timeoutMs: number, contextKb: number) =>
-        this.timeoutManager.promptRetry('Generating explanation', timeoutMs, contextKb),
+        this.timeoutManager.promptRetry(opLabel, timeoutMs, contextKb),
     });
 
     if (result.success && result.result !== undefined) {

@@ -32,14 +32,18 @@ You're already spending $100-200/month on Claude Max. Sidekick lets you drop you
 - Use **Sidekick** for fast inline completions, quick code transforms, and monitoring your CLI sessions
 - **Session Monitor** shows token usage, costs, activity timeline, and exactly what Claude is doing—essential for understanding where your quota goes, especially if you're hitting limits
 
-The extension uses Haiku by default for inline completions—fast, responsive, and lightweight enough that they won't meaningfully impact your Claude Code quota.
+The extension uses the fastest available model by default for inline completions—fast, responsive, and lightweight enough that they won't meaningfully impact your quota.
 
 ## Prerequisites
 
-- **Claude Max subscription** (Recommended) OR **Anthropic API key**
-- **Claude Code CLI** installed and authenticated (for Max subscription mode)
+At least one of the following:
 
-> **Why Max subscription is recommended:** Inline completions fire frequently as you type. With an API key, these per-token costs add up quickly. With Max ($100-200/month), completions are covered by your existing plan—no surprise bills. Haiku-powered completions are lightweight enough that they won't meaningfully impact your Claude Code quota.
+- **Claude Max subscription** (Recommended) — uses Claude Code CLI, no extra API cost
+- **Anthropic API key** — direct API access, per-token billing
+- **OpenCode** — uses your configured OpenCode provider/model
+- **Codex CLI** — uses OpenAI API
+
+> **Why Claude Max is recommended:** Inline completions fire frequently as you type. With an API key, these per-token costs add up quickly. With Max ($100-200/month), completions are covered by your existing plan—no surprise bills.
 
 ## Installation
 
@@ -67,16 +71,50 @@ The extension uses Haiku by default for inline completions—fast, responsive, a
    - Run "Sidekick: Set API Key" from the Command Palette
    - Enter your Anthropic API key
 
-3. Change auth mode in settings:
+3. Switch inference provider in settings:
    - Open Settings (`Ctrl+,`)
-   - Search for "sidekick.authMode"
-   - Select "api-key"
+   - Search for "sidekick.inferenceProvider"
+   - Select "claude-api"
+
+### For OpenCode Users
+
+1. Install the VS Code extension (same as above)
+
+2. Install the OpenCode SDK in the extension directory:
+   ```bash
+   cd ~/.vscode/extensions/cesarandreslopez.sidekick-for-max-*
+   npm install @opencode-ai/sdk
+   ```
+
+3. Make sure OpenCode is running (Sidekick connects to the local server on port 4096)
+
+4. Switch inference provider:
+   - Open Settings → search "sidekick.inferenceProvider" → select "opencode"
+   - Or: click the Sidekick status bar → "Switch Inference Provider" → OpenCode
+
+> **Note:** Model selection is handled by your OpenCode configuration. The tier values (fast/balanced/powerful) are passed as hints, but OpenCode's own model settings take precedence.
+
+### For Codex CLI Users
+
+1. Install the VS Code extension (same as above)
+
+2. Install the Codex SDK in the extension directory:
+   ```bash
+   cd ~/.vscode/extensions/cesarandreslopez.sidekick-for-max-*
+   npm install @openai/codex-sdk
+   ```
+
+3. Ensure your OpenAI API key is available (`OPENAI_API_KEY` or `CODEX_API_KEY` env var, or `~/.codex/.credentials.json`)
+
+4. Switch inference provider:
+   - Open Settings → search "sidekick.inferenceProvider" → select "codex"
+   - Or: click the Sidekick status bar → "Switch Inference Provider" → Codex CLI
 
 ## Features
 
-### Claude Code Session Monitor
+### Agent Hub (Session Monitor)
 
-Monitor your Claude Code sessions in real-time with a comprehensive analytics dashboard. Click the Session Monitor icon in the activity bar to access all monitoring features.
+Monitor your coding agent sessions in real-time with a comprehensive analytics dashboard. Click the Agent Hub icon in the activity bar to access all monitoring features. Supports Claude Code, OpenCode, and Codex CLI.
 
 ![Session Monitor demo](https://raw.githubusercontent.com/cesarandreslopez/sidekick-for-claude-max/main/assets/cost_session_context_quotas_claude_code.gif)
 
@@ -186,7 +224,7 @@ Ask questions about code or request changes without leaving your editor.
 - Ask questions - "What does this function do?" or "Is this thread-safe?"
 - Request changes - "Add error handling" or "Convert to async/await"
 - Diff preview for proposed changes
-- Uses Sonnet by default
+- Uses the balanced tier by default
 
 ### Generate Documentation
 
@@ -199,7 +237,7 @@ Automatically generate JSDoc/docstrings for functions, classes, and methods.
 **Features:**
 - Supports TypeScript, JavaScript, Python, and more
 - Generates parameter descriptions, return types, and examples
-- Uses Haiku by default for fast generation
+- Uses the fast tier by default for quick generation
 
 ### Explain Code
 
@@ -213,7 +251,7 @@ Get AI-powered explanations for selected code.
 - Five complexity levels: ELI5, Curious Amateur, Imposter Syndrome, Senior, PhD Mode
 - Rich webview panel with markdown rendering
 - Regenerate with custom instructions
-- Uses Sonnet by default
+- Uses the balanced tier by default
 
 ### Error Explanations & Fixes
 
@@ -222,7 +260,7 @@ Understand and fix errors with AI assistance.
 - Click the lightbulb on any diagnostic → "Explain Error with AI" or "Fix Error with AI"
 - Or right-click → Sidekick → Explain Error / Fix Error
 - Five complexity levels for explanations
-- Uses Sonnet by default
+- Uses the balanced tier by default
 
 ### AI Commit Messages
 
@@ -240,7 +278,7 @@ Generate intelligent commit messages from your staged changes with a single clic
 - Supports Conventional Commits format (`feat(scope): description`) or simple descriptions
 - Configurable default guidance for consistent commit style across your team
 - Automatically filters out lockfiles, binary files, and generated code
-- Uses Sonnet by default for high-quality messages
+- Uses the balanced tier by default for high-quality messages
 
 ### Pre-commit AI Review
 
@@ -251,7 +289,7 @@ Review your changes before committing. Click the eye icon in the Source Control 
 - Security concerns - highlights potential vulnerabilities
 - Code smells - identifies maintainability issues
 - Inline decorations - issues shown directly in the editor
-- Uses Sonnet by default for thorough analysis
+- Uses the balanced tier by default for thorough analysis
 
 ### PR Description Generation
 
@@ -261,7 +299,7 @@ Generate pull request descriptions automatically. Click the PR icon in the Sourc
 - Analyzes all commits on your branch vs the base branch
 - Generates summary, change list, and test plan
 - Copies to clipboard - ready to paste into GitHub/GitLab
-- Uses Sonnet by default for comprehensive descriptions
+- Uses the balanced tier by default for comprehensive descriptions
 
 ## Commands
 
@@ -281,7 +319,8 @@ Generate pull request descriptions automatically. Click the PR icon in the Sourc
 | Sidekick: Generate PR Description | Click PR icon in SCM | Generate pull request description |
 | Sidekick: View Logs | - | Open output channel for debugging |
 | Sidekick: Set API Key | - | Set your Anthropic API key |
-| Sidekick: Test Connection | - | Test API connectivity |
+| Sidekick: Switch Inference Provider | - | Switch between Claude, OpenCode, and Codex |
+| Sidekick: Test Connection | - | Test provider connectivity |
 | Sidekick: Open Session Dashboard | - | Open the Claude Code session monitor dashboard |
 | Sidekick: Start Session Monitoring | - | Begin monitoring Claude Code sessions |
 | Sidekick: Stop Session Monitoring | - | Stop monitoring Claude Code sessions |
@@ -299,39 +338,54 @@ Click "Sidekick" in the status bar to access:
 ![Status bar menu](https://raw.githubusercontent.com/cesarandreslopez/sidekick-for-claude-max/main/assets/logs_and_configuration.gif?v=3)
 
 - Enable/Disable completions
+- Switch Inference Provider
 - Configure Extension settings
 - View Logs
 - Test Connection
-- Set API Key
+- Set API Key (shown when using Claude API provider)
 
 ## Settings
 
+### Provider
+
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `sidekick.authMode` | `max-subscription` | Authentication mode: `max-subscription` or `api-key` |
+| `sidekick.inferenceProvider` | `auto` | AI provider: `auto`, `claude-max`, `claude-api`, `opencode`, `codex` |
+| `sidekick.claudePath` | (empty) | Custom path to Claude CLI (for pnpm/yarn/non-standard installs) |
+
+### Model Selection
+
+All model settings accept: `auto` (recommended), a tier (`fast`/`balanced`/`powerful`), a legacy name (`haiku`/`sonnet`/`opus`), or a full model ID.
+
+| Setting | Default | Auto resolves to |
+|---------|---------|------------------|
+| `sidekick.inlineModel` | `auto` | fast |
+| `sidekick.transformModel` | `auto` | powerful |
+| `sidekick.commitMessageModel` | `auto` | balanced |
+| `sidekick.docModel` | `auto` | fast |
+| `sidekick.explanationModel` | `auto` | balanced |
+| `sidekick.errorModel` | `auto` | balanced |
+| `sidekick.inlineChatModel` | `auto` | balanced |
+| `sidekick.reviewModel` | `auto` | balanced |
+| `sidekick.prDescriptionModel` | `auto` | balanced |
+
+### Other Settings
+
+| Setting | Default | Description |
+|---------|---------|-------------|
 | `sidekick.enabled` | `true` | Enable inline completions |
 | `sidekick.debounceMs` | `1000` | Delay before requesting completion (ms) |
 | `sidekick.inlineContextLines` | `30` | Lines of context before/after cursor for inline |
 | `sidekick.transformContextLines` | `50` | Lines of context before/after selection for transform |
 | `sidekick.multiline` | `false` | Enable multi-line completions (prose files always use multiline) |
-| `sidekick.inlineModel` | `haiku` | Model for inline: `haiku`, `sonnet`, or `opus` |
-| `sidekick.transformModel` | `opus` | Model for transform: `opus`, `sonnet`, or `haiku` |
-| `sidekick.docModel` | `haiku` | Model for documentation generation |
-| `sidekick.explainModel` | `sonnet` | Model for code explanations |
-| `sidekick.errorModel` | `sonnet` | Model for error explanations and fixes |
-| `sidekick.inlineChatModel` | `sonnet` | Model for Quick Ask |
-| `sidekick.reviewModel` | `sonnet` | Model for pre-commit review |
-| `sidekick.prDescriptionModel` | `sonnet` | Model for PR description generation |
-| `sidekick.commitMessageModel` | `sonnet` | Model for commit messages: `haiku`, `sonnet`, or `opus` |
 | `sidekick.commitMessageStyle` | `conventional` | Commit format: `conventional` or `simple` |
 | `sidekick.commitMessageGuidance` | (empty) | Default guidance for all commit messages |
 | `sidekick.showCommitButton` | `true` | Show commit message button in Source Control |
-| `sidekick.claudePath` | (empty) | Custom path to Claude CLI (for pnpm/yarn/non-standard installs) |
 | `sidekick.explanationComplexity` | `imposter-syndrome` | AI explanation level: `eli5`, `curious-amateur`, `imposter-syndrome`, `senior`, `phd` |
-| `sidekick.explanationModel` | `sonnet` | Model for explanations: `haiku`, `sonnet`, or `opus` |
 | `sidekick.showCompletionHint` | `true` | Show visual hint at cursor suggesting AI completion |
 | `sidekick.completionHintDelayMs` | `1500` | Delay before showing completion hint (ms) |
-| `sidekick.enableSessionMonitoring` | `true` | Enable Claude Code session monitoring |
+| `sidekick.enableSessionMonitoring` | `true` | Enable CLI agent session monitoring |
+| `sidekick.sessionProvider` | `auto` | Which agent to monitor: `auto`, `claude-code`, `opencode`, `codex` |
 | `sidekick.notifications.enabled` | `true` | Enable session notification triggers |
 | `sidekick.notifications.triggers.env-access` | `true` | Alert on credential/env file access |
 | `sidekick.notifications.triggers.destructive-cmd` | `true` | Alert on destructive commands |
@@ -344,33 +398,44 @@ Click "Sidekick" in the status bar to access:
 ## Troubleshooting
 
 ### No completions appearing
-1. Click status bar → "Test Connection" to verify API connectivity
+1. Click status bar → "Test Connection" to verify provider connectivity
 2. Click status bar → "View Logs" to check for errors
 3. Verify the status bar shows "Sidekick" is enabled
 
-### "Claude Code CLI not found" error (Max subscription mode)
+### "Claude Code CLI not found" error (claude-max provider)
 - Install the CLI: `npm install -g @anthropic-ai/claude-code`
 - Authenticate: `claude auth`
 - Verify: `claude --version`
 - **If installed via pnpm/yarn/volta:** Set `sidekick.claudePath` in settings to the full path (find it with `which claude` on Linux/Mac or `where claude` on Windows)
 
-### API key issues (API key mode)
+### API key issues (claude-api provider)
 - Run "Sidekick: Set API Key" to update your key
 - Ensure your API key has sufficient credits
 - Run "Sidekick: Test Connection" to verify connectivity
 
+### OpenCode connection issues
+- Ensure OpenCode is running (`opencode` in a terminal)
+- Sidekick connects to `http://127.0.0.1:4096` by default
+- The SDK must be installed: `npm install @opencode-ai/sdk` in the extension directory
+
+### Codex connection issues
+- Ensure `OPENAI_API_KEY` or `CODEX_API_KEY` is set, or `~/.codex/.credentials.json` exists
+- The SDK must be installed: `npm install @openai/codex-sdk` in the extension directory
+
 ### Rate limited
 - Wait a moment and try again
-- Consider using `haiku` model for more frequent completions
+- Consider using the `fast` tier for more frequent completions
 - Increase `debounceMs` to reduce request frequency
 
 ## Architecture
 
-The extension uses the Anthropic SDK directly:
-- **Max subscription mode**: Uses Claude Agent SDK to leverage your existing CLI authentication
-- **API key mode**: Uses Anthropic SDK with your API key
+The extension supports multiple inference providers:
+- **Claude Max** (`claude-max`): Uses Claude Agent SDK via the Claude Code CLI — no extra API cost
+- **Claude API** (`claude-api`): Uses Anthropic SDK with your API key — per-token billing
+- **OpenCode** (`opencode`): Uses `@opencode-ai/sdk` to connect to a local OpenCode server (requires `npm install @opencode-ai/sdk`)
+- **Codex** (`codex`): Uses `@openai/codex-sdk` for OpenAI Codex inference (requires `npm install @openai/codex-sdk`)
 
-No local server required.
+Provider auto-detection picks the most recently active agent based on filesystem timestamps. Model settings use a tier system (`fast`/`balanced`/`powerful`) that maps to provider-appropriate models automatically.
 
 ## License
 
