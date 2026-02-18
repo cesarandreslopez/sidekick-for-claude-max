@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.1] - 2026-02-19
+
+### Fixed
+
+- Fixed broken image references in Marketplace README
+- Updated Marketplace keywords to reflect multi-provider rebrand
+- Added Mermaid diagrams to architecture and configuration docs
+- Added install/download count badges to READMEs and docs
+- Added documentation links to all feature and provider mentions in READMEs
+- Fixed broken icon reference in docs index and root README
+
 ## [0.10.0] - 2026-02-18
 
 ### Added
