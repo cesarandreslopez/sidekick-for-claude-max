@@ -38,6 +38,10 @@ But they're also opaque. Tokens burn in the background with no visibility. Conte
 
 That bothers me. I want to see what my agent is doing. I want to review every tool call, understand where my tokens went, and carry context forward instead of losing it. Sidekick exists because I think the people using these agents deserve visibility into how they work — not just the output, but the process.
 
+## Context Management Matters
+
+Claude Code, OpenCode, and Codex all share the same fundamental limitation: they forget everything between sessions. Your agent's context window is finite — when it fills up, older content gets compacted and detail is lost. When the session ends, it's all gone. Without deliberate context management, every session starts from scratch: re-reading files, re-learning conventions, re-making decisions. Sidekick's session intelligence features — [handoff documents](https://cesarandreslopez.github.io/sidekick-agent-hub/features/session-handoff/), [decision logs](https://cesarandreslopez.github.io/sidekick-agent-hub/features/decision-log/), and [instruction file suggestions](https://cesarandreslopez.github.io/sidekick-agent-hub/features/claude-md-suggestions/) — bridge that gap so your agent builds on previous work instead of rediscovering it. Learn more in the [Context Management guide](https://cesarandreslopez.github.io/sidekick-agent-hub/getting-started/context-management/).
+
 ## Features
 
 - **[Inline Completions](https://cesarandreslopez.github.io/sidekick-agent-hub/features/inline-completions/)** — context-aware code suggestions that understand your project
@@ -73,10 +77,6 @@ That bothers me. I want to see what my agent is doing. I want to review every to
 - **[CLAUDE.md Suggestions](https://cesarandreslopez.github.io/sidekick-agent-hub/features/claude-md-suggestions/)** — learn from session patterns to improve agent effectiveness
 
   <img src="https://raw.githubusercontent.com/cesarandreslopez/sidekick-agent-hub/main/assets/claude-md-suggestions.png" alt="CLAUDE.md Suggestions" width="480">
-
-## Context Management Matters
-
-Claude Code, OpenCode, and Codex all share the same fundamental limitation: they forget everything between sessions. Your agent's context window is finite — when it fills up, older content gets compacted and detail is lost. When the session ends, it's all gone. Without deliberate context management, every session starts from scratch: re-reading files, re-learning conventions, re-making decisions. Sidekick's session intelligence features — [handoff documents](https://cesarandreslopez.github.io/sidekick-agent-hub/features/session-handoff/), [decision logs](https://cesarandreslopez.github.io/sidekick-agent-hub/features/decision-log/), and [instruction file suggestions](https://cesarandreslopez.github.io/sidekick-agent-hub/features/claude-md-suggestions/) — bridge that gap so your agent builds on previous work instead of rediscovering it. Learn more in the [Context Management guide](https://cesarandreslopez.github.io/sidekick-agent-hub/getting-started/context-management/).
 
 ## Quick Install
 

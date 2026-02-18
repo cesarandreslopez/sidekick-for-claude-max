@@ -81,8 +81,6 @@ When your AI agent runs autonomously, you need to know what it's doing. Real-tim
 
 ### Session Intelligence
 
-Claude Code, OpenCode, and Codex all share the same limitation: they forget everything between sessions. Context windows are finite, compaction loses detail mid-session, and nothing survives a session boundary. Without deliberate context management, every session re-discovers your project from scratch. These features bridge that gap. See the [Context Management guide](https://cesarandreslopez.github.io/sidekick-agent-hub/getting-started/context-management/) for the full picture.
-
 - **[Session Handoff](https://cesarandreslopez.github.io/sidekick-agent-hub/features/session-handoff/)** — automatic context documents for session continuity
 - **[Decision Log](https://cesarandreslopez.github.io/sidekick-agent-hub/features/decision-log/)** — tracks architectural decisions from sessions
 - **[CLAUDE.md Suggestions](https://cesarandreslopez.github.io/sidekick-agent-hub/features/claude-md-suggestions/)** — AI-powered session analysis for optimizing agent instructions
@@ -108,6 +106,10 @@ AI coding agents are the most transformative tools I've used in my career. They 
 But they're also opaque. Tokens burn in the background with no visibility. Context fills up silently until your agent starts forgetting things. And when a session ends, everything it learned — your architecture, your conventions, the decisions you made together — is just gone. The next session starts from zero.
 
 That bothers me. I want to see what my agent is doing. I want to review every tool call, understand where my tokens went, and carry context forward instead of losing it. Sidekick exists because I think the people using these agents deserve visibility into how they work — not just the output, but the process.
+
+## Context Management Matters
+
+Claude Code, OpenCode, and Codex all share the same limitation: they forget everything between sessions. Context windows are finite, compaction loses detail mid-session, and nothing survives a session boundary. Without deliberate context management, every session re-discovers your project from scratch. Sidekick's session intelligence features bridge that gap. See the [Context Management guide](https://cesarandreslopez.github.io/sidekick-agent-hub/getting-started/context-management/) for the full picture.
 
 ## [Key Settings](https://cesarandreslopez.github.io/sidekick-agent-hub/configuration/settings/)
 
