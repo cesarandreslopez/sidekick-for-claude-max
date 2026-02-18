@@ -17,6 +17,8 @@
  */
 
 import * as vscode from "vscode";
+import * as fs from "fs";
+import * as path from "path";
 import { AuthService } from "./services/AuthService";
 import { CompletionService } from "./services/CompletionService";
 import { warmupSdk } from "./services/MaxSubscriptionClient";
@@ -37,7 +39,10 @@ import { QuotaService } from './services/QuotaService';
 import { HistoricalDataService } from './services/HistoricalDataService';
 import { RetroactiveDataLoader } from './services/RetroactiveDataLoader';
 import { SessionAnalyzer } from './services/SessionAnalyzer';
-import { ClaudeMdAdvisor } from './services/ClaudeMdAdvisor';
+import { GuidanceAdvisor } from './services/GuidanceAdvisor';
+import { HandoffService } from './services/HandoffService';
+import { SessionSummaryService } from './services/SessionSummaryService';
+import { resolveInstructionTarget } from './types/instructionFile';
 import { NotificationTriggerService } from './services/NotificationTriggerService';
 import { SessionEventLogger } from './services/SessionEventLogger';
 import { ConversationViewProvider } from './providers/ConversationViewProvider';
@@ -365,10 +370,10 @@ export async function activate(context: vscode.ExtensionContext) {
       sessionMonitor.setEventLogger(eventLogger);
     }
 
-    // Create SessionAnalyzer and ClaudeMdAdvisor for CLAUDE.md suggestions
+    // Create SessionAnalyzer and GuidanceAdvisor for instruction file suggestions
     const sessionAnalyzer = new SessionAnalyzer(sessionMonitor);
-    const claudeMdAdvisor = new ClaudeMdAdvisor(authService, sessionAnalyzer);
-    log('SessionAnalyzer and ClaudeMdAdvisor initialized');
+    const guidanceAdvisor = new GuidanceAdvisor(authService, sessionAnalyzer, sessionMonitor);
+    log('SessionAnalyzer and GuidanceAdvisor initialized');
 
     // Decision Log Service
     let decisionLogService: DecisionLogService | undefined;
@@ -382,9 +387,101 @@ export async function activate(context: vscode.ExtensionContext) {
       context.subscriptions.push(decisionLogService);
     }
 
-    // Register dashboard view provider (depends on sessionMonitor, quotaService, historicalDataService, and claudeMdAdvisor)
-    dashboardProvider = new DashboardViewProvider(context.extensionUri, sessionMonitor, quotaService, historicalDataService, claudeMdAdvisor, sessionAnalyzer, authService, decisionLogService);
+    // Handoff Service
+    let handoffService: HandoffService | undefined;
+    const handoffWorkspaceFolder = vscode.workspace.workspaceFolders?.[0];
+    if (handoffWorkspaceFolder) {
+      const handoffSlug = encodeWorkspacePath(handoffWorkspaceFolder.uri.fsPath);
+      handoffService = new HandoffService(handoffSlug);
+      handoffService.initialize().catch(error => {
+        logError('Failed to initialize HandoffService', error);
+      });
+      context.subscriptions.push(handoffService);
+    }
+
+    // Auto-generate handoff on session end
+    sessionMonitor.onSessionEnd(() => {
+      const autoHandoff = vscode.workspace.getConfiguration('sidekick').get<string>('autoHandoff', 'off');
+      if (autoHandoff === 'off' || !handoffService || !sessionAnalyzer) return;
+
+      const stats = sessionMonitor?.getStats();
+      if (!stats) return;
+
+      const summaryService = new SessionSummaryService();
+      const analysisData = sessionAnalyzer.getCachedData();
+      const summaryData = summaryService.generateSummary(stats, analysisData, 200000);
+
+      handoffService.generateHandoff(summaryData, analysisData, stats).then(handoffPath => {
+        log(`Handoff generated: ${handoffPath}`);
+      }).catch(error => {
+        logError('Failed to generate handoff', error);
+      });
+    });
+
+    // Notify on session start if a handoff exists
+    sessionMonitor.onSessionStart(() => {
+      const autoHandoff = vscode.workspace.getConfiguration('sidekick').get<string>('autoHandoff', 'off');
+      if (autoHandoff !== 'generate-and-notify' || !handoffService) return;
+
+      const latestPath = handoffService.getLatestHandoffPath();
+      if (latestPath) {
+        vscode.window.showInformationMessage(
+          'Previous session context available.',
+          'Open Handoff'
+        ).then(action => {
+          if (action === 'Open Handoff') {
+            vscode.workspace.openTextDocument(latestPath).then(doc => {
+              vscode.window.showTextDocument(doc);
+            });
+          }
+        });
+      }
+    });
+
+    // Register "Sidekick: Setup Handoff" command
+    context.subscriptions.push(
+      vscode.commands.registerCommand('sidekick.setupHandoff', async () => {
+        if (!sessionMonitor || !handoffService) {
+          vscode.window.showWarningMessage('Session monitoring is not active.');
+          return;
+        }
+
+        const providerId = sessionMonitor.getProvider().id;
+        const target = resolveInstructionTarget(providerId);
+        const wsFolder = vscode.workspace.workspaceFolders?.[0];
+        if (!wsFolder) {
+          vscode.window.showWarningMessage('No workspace folder open.');
+          return;
+        }
+
+        const filePath = path.join(wsFolder.uri.fsPath, target.primaryFile);
+        const handoffSlug = encodeWorkspacePath(wsFolder.uri.fsPath);
+        const oneLiner = `\nIf resuming prior work or need context on previous sessions, read ~/.config/sidekick/handoffs/${handoffSlug}-latest.md\n`;
+
+        // Check if file exists and if one-liner is already present
+        let existingContent = '';
+        try {
+          existingContent = await fs.promises.readFile(filePath, 'utf-8');
+        } catch {
+          // File doesn't exist, will create it
+        }
+
+        if (existingContent.includes('sidekick/handoffs/')) {
+          vscode.window.showInformationMessage(`Handoff reference already set up in ${target.primaryFile}.`);
+          return;
+        }
+
+        await fs.promises.writeFile(filePath, existingContent + oneLiner, 'utf-8');
+        vscode.window.showInformationMessage(`Added handoff reference to ${target.primaryFile}.`);
+      })
+    );
+
+    // Register dashboard view provider (depends on sessionMonitor, quotaService, historicalDataService, and guidanceAdvisor)
+    dashboardProvider = new DashboardViewProvider(context.extensionUri, sessionMonitor, quotaService, historicalDataService, guidanceAdvisor, sessionAnalyzer, authService, decisionLogService);
     dashboardProvider.setEventLogger(eventLogger);
+    if (handoffService) {
+      dashboardProvider.setHandoffService(handoffService);
+    }
     context.subscriptions.push(dashboardProvider);
     context.subscriptions.push(
       vscode.window.registerWebviewViewProvider(DashboardViewProvider.viewType, dashboardProvider)

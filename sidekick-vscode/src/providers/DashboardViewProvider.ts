@@ -20,8 +20,13 @@ import * as path from 'path';
 import type { SessionMonitor } from '../services/SessionMonitor';
 import type { QuotaService } from '../services/QuotaService';
 import type { HistoricalDataService } from '../services/HistoricalDataService';
-import type { ClaudeMdAdvisor } from '../services/ClaudeMdAdvisor';
+import type { GuidanceAdvisor } from '../services/GuidanceAdvisor';
 import type { QuotaState as DashboardQuotaState, HistoricalSummary, HistoricalDataPoint, LatencyDisplay, ClaudeMdSuggestionDisplay } from '../types/dashboard';
+import { resolveInstructionTarget } from '../types/instructionFile';
+import type { HandoffService } from '../services/HandoffService';
+import { encodeWorkspacePath } from '../services/SessionPathResolver';
+import { resolveModel } from '../services/ModelResolver';
+import { TimeoutError } from '../types';
 import type { TokenUsage, SessionStats, ToolAnalytics, TimelineEvent, ToolCall, LatencyStats } from '../types/claudeSession';
 import type { DashboardMessage, DashboardWebviewMessage, DashboardState, CompactionEventDisplay, ToolCallDetailDisplay } from '../types/dashboard';
 import type { SessionAnalyzer } from '../services/SessionAnalyzer';
@@ -92,8 +97,8 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
   /** Current drill-down level for historical data */
   private _drillDownStack: Array<{ range: string; timestamp: string }> = [];
 
-  /** ClaudeMdAdvisor for generating CLAUDE.md suggestions */
-  private _claudeMdAdvisor?: ClaudeMdAdvisor;
+  /** GuidanceAdvisor for generating instruction file suggestions */
+  private _guidanceAdvisor?: GuidanceAdvisor;
 
   /** SessionAnalyzer for analysis data */
   private _sessionAnalyzer?: SessionAnalyzer;
@@ -119,11 +124,21 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
   /** Decision log service for cross-session decision persistence */
   private _decisionLogService?: DecisionLogService;
 
+  /** Handoff service for session context handoff */
+  private _handoffService?: HandoffService;
+
   /**
    * Sets the event logger instance used for dashboard toggle control.
    */
   setEventLogger(logger: SessionEventLogger): void {
     this._eventLogger = logger;
+  }
+
+  /**
+   * Sets the handoff service instance for session context handoff generation.
+   */
+  setHandoffService(service: HandoffService): void {
+    this._handoffService = service;
   }
 
   /**
@@ -133,7 +148,7 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
    * @param _sessionMonitor - SessionMonitor instance for token events
    * @param quotaService - Optional QuotaService for subscription quota
    * @param historicalDataService - Optional HistoricalDataService for long-term analytics
-   * @param claudeMdAdvisor - Optional ClaudeMdAdvisor for generating suggestions
+   * @param guidanceAdvisor - Optional GuidanceAdvisor for generating suggestions
    * @param sessionAnalyzer - Optional SessionAnalyzer for richer panel data
    * @param authService - Optional AuthService for AI narrative generation
    * @param decisionLogService - Optional DecisionLogService for cross-session decisions
@@ -143,14 +158,14 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
     private readonly _sessionMonitor: SessionMonitor,
     quotaService?: QuotaService,
     historicalDataService?: HistoricalDataService,
-    claudeMdAdvisor?: ClaudeMdAdvisor,
+    guidanceAdvisor?: GuidanceAdvisor,
     sessionAnalyzer?: SessionAnalyzer,
     authService?: AuthService,
     decisionLogService?: DecisionLogService
   ) {
     this._quotaService = quotaService;
     this._historicalDataService = historicalDataService;
-    this._claudeMdAdvisor = claudeMdAdvisor;
+    this._guidanceAdvisor = guidanceAdvisor;
     this._sessionAnalyzer = sessionAnalyzer;
     this._authService = authService;
     this._decisionLogService = decisionLogService;
@@ -390,7 +405,8 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
         break;
 
       case 'openClaudeMd':
-        this._handleOpenClaudeMd();
+      case 'openInstructionFile':
+        this._handleOpenInstructionFile();
         break;
 
       case 'generateNarrative':
@@ -432,6 +448,12 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
 
       case 'searchDecisions':
         this._sendDecisionsToWebview(message.query);
+        break;
+
+      case 'generateHandoff':
+        this._handleGenerateHandoff().catch(err => {
+          logError('Dashboard: Unhandled error in _handleGenerateHandoff', err);
+        });
         break;
 
       case 'clearDecisions':
@@ -533,36 +555,46 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
 
   /**
    * Handles the analyze session request from webview.
-   * Calls ClaudeMdAdvisor and sends results to webview.
-   * Shows a progress notification to set latency expectations.
+   * Calls GuidanceAdvisor and sends results to webview.
+   * Shows a progress notification with provider/model info.
+   *
+   * @param timeoutOverride - Optional timeout override in ms (for retry after timeout)
    */
-  private async _handleAnalyzeSession(): Promise<void> {
+  private async _handleAnalyzeSession(timeoutOverride?: number): Promise<void> {
     log('Dashboard: _handleAnalyzeSession called');
-    if (!this._claudeMdAdvisor) {
-      log('Dashboard: _claudeMdAdvisor is not available');
+    if (!this._guidanceAdvisor) {
+      log('Dashboard: _guidanceAdvisor is not available');
       this._postMessage({
         type: 'suggestionsError',
-        error: 'CLAUDE.md analysis is not available. Please check extension configuration.'
+        error: 'Agent guidance analysis is not available. Please check extension configuration.'
       });
       return;
     }
+
+    const target = resolveInstructionTarget(this._sessionMonitor.getProvider().id);
 
     log('Dashboard: Starting session analysis');
     log(`Dashboard: _view exists: ${!!this._view}`);
     this._postMessage({ type: 'suggestionsLoading', loading: true });
 
     try {
-      // Show progress notification with latency expectation
+      const inferenceProvider = this._authService?.getProviderDisplayName() ?? 'AI';
+      const model = this._authService
+        ? resolveModel('balanced', this._authService.getProviderId(), 'explanationModel')
+        : 'unknown';
+
       await vscode.window.withProgress(
         {
           location: vscode.ProgressLocation.Notification,
-          title: 'Analyzing session for CLAUDE.md suggestions',
+          title: `Analyzing session for ${target.primaryFile} suggestions`,
           cancellable: false,
         },
         async (progress) => {
-          progress.report({ message: 'This may take 30-60 seconds...' });
+          progress.report({ message: `Using ${inferenceProvider} (${model})... This may take 30-60 seconds.` });
 
-          const result = await this._claudeMdAdvisor!.analyze();
+          const result = await this._guidanceAdvisor!.analyze(
+            timeoutOverride ? { timeout: timeoutOverride } : undefined
+          );
 
           if (result.success) {
             const suggestions: ClaudeMdSuggestionDisplay[] = result.suggestions.map(s => ({
@@ -583,6 +615,17 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
         }
       );
     } catch (error) {
+      if (error instanceof TimeoutError) {
+        const retry = await vscode.window.showWarningMessage(
+          `Analysis timed out after ${error.timeoutMs / 1000}s. Try again with a longer timeout?`,
+          'Retry (3 min)', 'Retry (5 min)', 'Cancel'
+        );
+        if (retry?.startsWith('Retry')) {
+          const newTimeout = retry.includes('3') ? 180000 : 300000;
+          return this._handleAnalyzeSession(newTimeout);
+        }
+      }
+
       const message = error instanceof Error ? error.message : 'Unknown error';
       this._postMessage({
         type: 'suggestionsError',
@@ -603,36 +646,125 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
   }
 
   /**
-   * Handles opening the project's CLAUDE.md file.
+   * Handles opening the project's instruction file (CLAUDE.md or AGENTS.md).
+   * If the file doesn't exist, offers to create it.
    */
-  private async _handleOpenClaudeMd(): Promise<void> {
-    const claudeMdPath = await this._findProjectClaudeMd();
-    if (claudeMdPath) {
-      const doc = await vscode.workspace.openTextDocument(claudeMdPath);
+  private async _handleOpenInstructionFile(): Promise<void> {
+    const target = resolveInstructionTarget(this._sessionMonitor.getProvider().id);
+    const existingPath = await this._findProjectInstructionFile(target.primaryFile);
+    if (existingPath) {
+      const doc = await vscode.workspace.openTextDocument(existingPath);
       await vscode.window.showTextDocument(doc);
     } else {
-      vscode.window.showInformationMessage(
-        'No CLAUDE.md found. Run /init in Claude Code to create one, or create it manually in your project root.'
+      const action = await vscode.window.showInformationMessage(
+        target.notFoundMessage,
+        `Create ${target.primaryFile}`
       );
+      if (action) {
+        const wsFolder = vscode.workspace.workspaceFolders?.[0];
+        if (wsFolder) {
+          const newPath = path.join(wsFolder.uri.fsPath, target.primaryFile);
+          await fs.promises.writeFile(newPath, `# ${target.primaryFile}\n\n`, 'utf-8');
+          const doc = await vscode.workspace.openTextDocument(newPath);
+          await vscode.window.showTextDocument(doc);
+        }
+      }
     }
   }
 
   /**
-   * Finds the CLAUDE.md file for the current workspace.
-   *
-   * @returns Path to CLAUDE.md if found, undefined otherwise
+   * Handles generating a session context handoff document.
+   * After generation, offers to add the pointer to the instruction file.
    */
-  private async _findProjectClaudeMd(): Promise<string | undefined> {
+  private async _handleGenerateHandoff(): Promise<void> {
+    if (!this._handoffService || !this._sessionAnalyzer) {
+      vscode.window.showWarningMessage('Handoff service is not available. Ensure a workspace is open.');
+      return;
+    }
+
+    const stats = this._sessionMonitor.getStats();
+    const analysisData = this._sessionAnalyzer.getCachedData();
+    const summaryData = this._summaryService.generateSummary(stats, analysisData, this._getContextWindowLimit());
+
+    try {
+      const handoffPath = await this._handoffService.generateHandoff(summaryData, analysisData, stats);
+
+      // Check if instruction file already has the pointer
+      const target = resolveInstructionTarget(this._sessionMonitor.getProvider().id);
+      const wsFolder = vscode.workspace.workspaceFolders?.[0];
+      const instructionFilePath = wsFolder
+        ? path.join(wsFolder.uri.fsPath, target.primaryFile)
+        : null;
+
+      let hasPointer = false;
+      if (instructionFilePath) {
+        try {
+          const content = await fs.promises.readFile(instructionFilePath, 'utf-8');
+          hasPointer = content.includes('sidekick/handoffs/');
+        } catch {
+          // File doesn't exist yet — no pointer
+        }
+      }
+
+      if (hasPointer) {
+        // Pointer already set up — just confirm
+        const action = await vscode.window.showInformationMessage(
+          `Handoff generated.`,
+          'Open Handoff'
+        );
+        if (action === 'Open Handoff') {
+          const doc = await vscode.workspace.openTextDocument(handoffPath);
+          await vscode.window.showTextDocument(doc);
+        }
+      } else {
+        // Offer to add pointer to instruction file
+        const action = await vscode.window.showInformationMessage(
+          `Handoff generated. Add a pointer to ${target.primaryFile} so your agent knows where to find it?`,
+          `Add to ${target.primaryFile}`,
+          'Open Handoff',
+          'Skip'
+        );
+        if (action === `Add to ${target.primaryFile}` && wsFolder) {
+          const slug = encodeWorkspacePath(wsFolder.uri.fsPath);
+          const oneLiner = `\nIf resuming prior work or need context on previous sessions, read ~/.config/sidekick/handoffs/${slug}-latest.md\n`;
+
+          let existingContent = '';
+          try {
+            existingContent = await fs.promises.readFile(instructionFilePath!, 'utf-8');
+          } catch {
+            // File doesn't exist — will create
+          }
+
+          await fs.promises.writeFile(instructionFilePath!, existingContent + oneLiner, 'utf-8');
+          vscode.window.showInformationMessage(`Pointer added to ${target.primaryFile}.`);
+        } else if (action === 'Open Handoff') {
+          const doc = await vscode.workspace.openTextDocument(handoffPath);
+          await vscode.window.showTextDocument(doc);
+        }
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      vscode.window.showErrorMessage(`Handoff generation failed: ${message}`);
+      logError('Dashboard: Handoff generation error', error);
+    }
+  }
+
+  /**
+   * Finds an instruction file for the current workspace.
+   *
+   * @param filename - The instruction file to look for
+   * @returns Path to the file if found, undefined otherwise
+   */
+  private async _findProjectInstructionFile(filename: string): Promise<string | undefined> {
     const workspaceFolders = vscode.workspace.workspaceFolders;
     if (!workspaceFolders || workspaceFolders.length === 0) {
       return undefined;
     }
 
-    // Check each workspace folder for CLAUDE.md
     for (const folder of workspaceFolders) {
-      const claudeMdPath = path.join(folder.uri.fsPath, 'CLAUDE.md');
-      if (fs.existsSync(claudeMdPath)) {
-        return claudeMdPath;
+      const filePath = path.join(folder.uri.fsPath, filename);
+      if (fs.existsSync(filePath)) {
+        return filePath;
       }
     }
 
@@ -641,8 +773,10 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
 
   /**
    * Handles the generate narrative request from webview.
+   *
+   * @param timeoutOverride - Optional timeout override in ms (for retry after timeout)
    */
-  private async _handleGenerateNarrative(): Promise<void> {
+  private async _handleGenerateNarrative(timeoutOverride?: number): Promise<void> {
     if (!this._authService || !this._cachedSummary) {
       this._postMessage({ type: 'narrativeError', error: 'Summary data or auth not available.' });
       return;
@@ -651,6 +785,9 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
     this._postMessage({ type: 'narrativeLoading', loading: true });
 
     try {
+      const inferenceProvider = this._authService.getProviderDisplayName();
+      const model = resolveModel('balanced', this._authService.getProviderId(), 'explanationModel');
+
       await vscode.window.withProgress(
         {
           location: vscode.ProgressLocation.Notification,
@@ -658,15 +795,27 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
           cancellable: false,
         },
         async (progress) => {
-          progress.report({ message: 'This may take 15-30 seconds...' });
+          progress.report({ message: `Using ${inferenceProvider} (${model})... This may take 15-30 seconds.` });
           const narrative = await this._summaryService.generateNarrative(
             this._cachedSummary!,
-            this._authService!
+            this._authService!,
+            timeoutOverride ? { timeout: timeoutOverride } : undefined
           );
           this._postMessage({ type: 'sessionNarrative', narrative });
         }
       );
     } catch (error) {
+      if (error instanceof TimeoutError) {
+        const retry = await vscode.window.showWarningMessage(
+          `Narrative generation timed out after ${error.timeoutMs / 1000}s. Try again with a longer timeout?`,
+          'Retry (3 min)', 'Retry (5 min)', 'Cancel'
+        );
+        if (retry?.startsWith('Retry')) {
+          const newTimeout = retry.includes('3') ? 180000 : 300000;
+          return this._handleGenerateNarrative(newTimeout);
+        }
+      }
+
       const message = error instanceof Error ? error.message : 'Unknown error';
       this._postMessage({ type: 'narrativeError', error: `Narrative generation failed: ${message}` });
       logError('Dashboard: Narrative generation error', error);
@@ -3699,6 +3848,27 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
       font-size: 11px;
       line-height: 1.4;
     }
+
+    /* Session Handoff Button */
+    .handoff-section {
+      margin-top: 12px;
+      padding: 8px 0;
+    }
+
+    .handoff-btn {
+      width: 100%;
+      padding: 6px 12px;
+      font-size: 12px;
+      color: var(--vscode-button-secondaryForeground);
+      background: var(--vscode-button-secondaryBackground);
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+
+    .handoff-btn:hover {
+      background: var(--vscode-button-secondaryHoverBackground);
+    }
   </style>
 </head>
 <body>
@@ -3843,24 +4013,29 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
         </div>
       </div>
 
-      <!-- CLAUDE.md Suggestions Panel -->
+      <!-- Agent Guidance Suggestions Panel -->
       <div class="suggestions-section" id="suggestions-panel">
         <div class="suggestions-header" id="suggestions-header">
           <div class="suggestions-header-left">
             <span class="suggestions-toggle-icon">▶</span>
             <h3>Improve Agent Guidance</h3>
           </div>
-          <button id="analyze-btn" title="Analyze your session patterns to generate suggestions for your CLAUDE.md file. Better guidance helps Claude work more efficiently on your project.">Get Suggestions</button>
+          <button id="analyze-btn" title="Analyze your session patterns to generate suggestions for your agent's instruction file. Better guidance helps the agent work more efficiently on your project.">Get Suggestions</button>
         </div>
         <div class="suggestions-body">
           <p class="suggestions-intro">
-            Analyze your session to get AI-powered suggestions for improving your CLAUDE.md file.
-            <a href="https://docs.anthropic.com/en/docs/claude-code/memory#claudemd" target="_blank">Best practices →</a>
+            Analyze your session to get AI-powered suggestions for improving your agent's instruction file.
+            <a id="guidance-docs-link" href="https://docs.anthropic.com/en/docs/claude-code/memory#claudemd" target="_blank">Best practices →</a>
           </p>
           <div class="suggestions-content">
             <!-- Suggestions will be rendered here -->
           </div>
         </div>
+      </div>
+
+      <!-- Session Handoff -->
+      <div class="handoff-section">
+        <button id="generate-handoff-btn" class="handoff-btn" title="Generate a context handoff document so your next agent session can pick up where this one left off.">Generate Handoff</button>
       </div>
 
       <!-- Session Activity Group -->
@@ -4264,6 +4439,11 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
       let currentProviderName = 'Claude Code';
       let currentQuota = null;
 
+      // Provider-aware instruction file targeting
+      var targetFileName = 'CLAUDE.md';
+      var targetFileTip = 'After adding suggestions to your CLAUDE.md, run /init in Claude Code to consolidate and optimize the file.';
+      var targetDocsUrl = 'https://docs.anthropic.com/en/docs/claude-code/memory#claudemd';
+
       // Suggestions state
       let currentSuggestions = [];
       let suggestionsLoading = false;
@@ -4334,7 +4514,7 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
           html = '<div class="suggestion-card suggestion-card-consolidated">' +
             '<div class="suggestion-header">' + escapeHtml(s.title) + '</div>' +
             '<div class="suggestion-summary"><span class="label">Summary:</span> ' + escapeHtml(s.observed) + '</div>' +
-            '<div class="suggestion-code-header">Append this to CLAUDE.md:</div>' +
+            '<div class="suggestion-code-header">Append this to ' + targetFileName + ':</div>' +
             '<pre class="suggestion-code">' + escapeHtml(s.suggestion) + '</pre>' +
             '<div class="suggestion-actions">' +
               '<button class="copy-btn" data-index="0">Copy to Clipboard</button>' +
@@ -4361,10 +4541,10 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
 
         content.innerHTML = html +
           '<div class="suggestions-footer">' +
-            '<button class="open-claude-md-btn">Open CLAUDE.md</button>' +
+            '<button class="open-claude-md-btn">Open ' + targetFileName + '</button>' +
           '</div>' +
           '<div class="suggestions-tip">' +
-            '<strong>💡 Tip:</strong> After adding suggestions to your CLAUDE.md, run <code>/init</code> in Claude Code to consolidate and optimize the file.' +
+            '<strong>💡 Tip:</strong> ' + escapeHtml(targetFileTip) +
           '</div>';
 
         // Attach event listeners (CSP blocks inline onclick)
@@ -4383,7 +4563,7 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
         var openBtn = content.querySelector('.open-claude-md-btn');
         if (openBtn) {
           openBtn.addEventListener('click', function() {
-            vscode.postMessage({ type: 'openClaudeMd' });
+            vscode.postMessage({ type: 'openInstructionFile' });
           });
         }
       }
@@ -5283,6 +5463,33 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
         currentProviderId = providerId;
         currentProviderName = providerName;
 
+        // Update instruction file targeting based on provider
+        var instructionTargets = {
+          'claude-code': {
+            file: 'CLAUDE.md',
+            tip: 'After adding suggestions to your CLAUDE.md, run /init in Claude Code to consolidate and optimize the file.',
+            docsUrl: 'https://docs.anthropic.com/en/docs/claude-code/memory#claudemd'
+          },
+          'opencode': {
+            file: 'AGENTS.md',
+            tip: 'OpenCode reads AGENTS.md for project-specific instructions. It falls back to CLAUDE.md if AGENTS.md is not found.',
+            docsUrl: 'https://github.com/opencode-ai/opencode'
+          },
+          'codex': {
+            file: 'AGENTS.md',
+            tip: 'Codex reads AGENTS.md for project-specific agent instructions.',
+            docsUrl: 'https://github.com/openai/codex'
+          }
+        };
+        var instrTarget = instructionTargets[providerId] || instructionTargets['claude-code'];
+        targetFileName = instrTarget.file;
+        targetFileTip = instrTarget.tip;
+        targetDocsUrl = instrTarget.docsUrl;
+
+        // Update docs link if present
+        var docsLink = document.getElementById('guidance-docs-link');
+        if (docsLink) docsLink.setAttribute('href', targetDocsUrl);
+
         if (sessionProviderSelect) {
           sessionProviderSelect.value = providerId;
         }
@@ -5844,6 +6051,14 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider, vscode
             suggestionsPanel.classList.add('expanded');
           }
           vscode.postMessage({ type: 'analyzeSession' });
+        });
+      }
+
+      // Set up handoff button
+      var handoffBtn = document.getElementById('generate-handoff-btn');
+      if (handoffBtn) {
+        handoffBtn.addEventListener('click', function() {
+          vscode.postMessage({ type: 'generateHandoff' });
         });
       }
 

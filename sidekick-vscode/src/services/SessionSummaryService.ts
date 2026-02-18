@@ -308,11 +308,19 @@ export class SessionSummaryService {
 
   /**
    * Generates an AI narrative summary of the session.
+   *
+   * @param summary - Session summary data
+   * @param authService - Auth service for inference
+   * @param options - Optional overrides (e.g. timeout)
    */
-  async generateNarrative(summary: SessionSummaryData, authService: AuthService): Promise<string> {
+  async generateNarrative(
+    summary: SessionSummaryData,
+    authService: AuthService,
+    options?: { timeout?: number }
+  ): Promise<string> {
     const prompt = buildNarrativePrompt(summary);
     const model = resolveModel('fast', authService.getProviderId(), 'inlineModel');
-    return authService.complete(prompt, { model, maxTokens: 1024 });
+    return authService.complete(prompt, { model, maxTokens: 1024, ...options });
   }
 
   // ── Private helpers ──

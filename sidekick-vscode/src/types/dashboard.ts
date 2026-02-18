@@ -137,6 +137,7 @@ export type DashboardWebviewMessage =
   | { type: 'analyzeSession' }
   | { type: 'copySuggestion'; text: string }
   | { type: 'openClaudeMd' }
+  | { type: 'openInstructionFile' }
   | { type: 'generateNarrative' }
   | { type: 'requestSessionSummary' }
   | { type: 'searchTimeline'; query: string }
@@ -145,7 +146,8 @@ export type DashboardWebviewMessage =
   | { type: 'toggleEventLog'; enabled: boolean }
   | { type: 'requestDecisions' }
   | { type: 'searchDecisions'; query: string }
-  | { type: 'clearDecisions' };
+  | { type: 'clearDecisions' }
+  | { type: 'generateHandoff' };
 
 /**
  * Model usage breakdown entry.

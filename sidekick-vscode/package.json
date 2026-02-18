@@ -444,8 +444,25 @@
         }
       },
       {
-        "title": "Advanced (Deprecated)",
+        "title": "Session Handoff",
         "order": 9,
+        "properties": {
+          "sidekick.autoHandoff": {
+            "type": "string",
+            "enum": ["off", "generate-only", "generate-and-notify"],
+            "default": "off",
+            "description": "Controls automatic session context handoff generation.",
+            "enumDescriptions": [
+              "Do not generate handoff documents",
+              "Generate handoff document at session end (stored in ~/.config/sidekick/handoffs/)",
+              "Generate handoff and show notification at next session start"
+            ]
+          }
+        }
+      },
+      {
+        "title": "Advanced (Deprecated)",
+        "order": 10,
         "properties": {
           "sidekick.authMode": {
             "type": "string",
@@ -626,6 +643,10 @@
       {
         "command": "sidekick.setInferenceProvider",
         "title": "Sidekick: Switch Inference Provider"
+      },
+      {
+        "command": "sidekick.setupHandoff",
+        "title": "Sidekick: Setup Handoff"
       }
     ],
     "submenus": [
