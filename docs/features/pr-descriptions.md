@@ -1,5 +1,7 @@
 # PR Description Generation
 
+Writing PR descriptions is tedious but important — reviewers need context. This analyzes all commits on your branch and generates a structured summary with changes and test plan, ready to paste into your PR.
+
 Generate pull request descriptions automatically from your branch changes.
 
 ## Usage

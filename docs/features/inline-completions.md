@@ -1,6 +1,8 @@
 # Inline Completions
 
-Get intelligent code suggestions as you type. Completions appear as ghost text that you can accept with Tab.
+Context-aware completions that understand your project. Unlike generic autocomplete, these suggestions factor in surrounding code, imports, and patterns — so you spend less time typing boilerplate and more time thinking about architecture.
+
+Completions appear as ghost text that you can accept with Tab.
 
 ## Usage
 

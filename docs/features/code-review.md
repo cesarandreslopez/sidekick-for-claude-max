@@ -1,5 +1,7 @@
 # Pre-commit Code Review
 
+Catch issues before they reach your team. Pre-commit review analyzes your staged changes for bugs, security concerns, and code smells — like having a senior engineer glance at your diff before you push.
+
 Review your changes before committing with AI-powered analysis.
 
 ## Usage

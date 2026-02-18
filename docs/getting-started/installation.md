@@ -1,5 +1,7 @@
 # Installation
 
+Get AI completions, agent monitoring, and session intelligence working in under two minutes.
+
 ## VS Code Marketplace
 
 Install directly from the [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=CesarAndresLopez.sidekick-for-max):

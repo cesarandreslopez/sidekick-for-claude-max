@@ -5,37 +5,7 @@ All notable changes to the Sidekick Agent Hub VS Code extension will be document
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.10.3] - 2026-02-18
-
-### Changed
-
-- Rebranded from "Sidekick for Max" to "Sidekick Agent Hub"
-- Updated repository URLs and metadata for new repo name
-
-### Added
-
-- Material for MkDocs documentation site with GitHub Pages deployment
-- Asset cleanup in preparation for new release
-
-## [0.10.2] - 2026-02-17
-
-### Added
-
-- **Provider-Aware Instruction File Targeting**: Session handoff now targets the correct instruction file per provider (CLAUDE.md, AGENTS.md, etc.)
-- **Session Handoff System**: Auto-generates context handoff documents at session end for seamless continuation
-  - Configurable via `sidekick.autoHandoff` setting: off, generate-only, generate-and-notify
-  - Stored in `~/.config/sidekick/handoffs/`
-  - "Setup Handoff" command adds reference to your agent instruction file
-
-## [0.10.1] - 2026-02-16
-
-### Fixed
-
-- **Codex CLI Integration**: Replaced `@openai/codex-sdk` with direct CLI spawning for reliable Codex inference
-  - SDK dependency removed; Codex CLI is now invoked as a subprocess
-  - Resolves compatibility issues with the Codex SDK package
-
-## [0.10.0] - 2026-02-16
+## [0.10.0] - 2026-02-18
 
 ### Added
 
@@ -50,21 +20,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `"auto"` resolves to a per-feature default tier (e.g., inline completions → fast, transforms → powerful)
   - Legacy names (haiku/sonnet/opus) map through `LEGACY_TIER_MAP`
   - Tiers map to provider-specific model IDs via `DEFAULT_MODEL_MAPPINGS`
+- **Session Handoff System**: Provider-aware context handoff documents for seamless session continuation
+  - Configurable via `sidekick.autoHandoff` setting: off, generate-only, generate-and-notify
+  - Targets the correct instruction file per provider (CLAUDE.md, AGENTS.md, etc.)
+  - Stored in `~/.config/sidekick/handoffs/`
 - **Cross-Session Task Persistence**: Tasks from Kanban board persist across sessions in `~/.config/sidekick/tasks/{projectSlug}.json`
 - **Decision Log Extraction**: Tracks and persists architectural decisions from sessions in `~/.config/sidekick/decisions/{projectSlug}.json`
 - **Event Logging Audit Trail**: Optional JSONL event logging for debugging
   - New settings: `sidekick.enableEventLog`, `sidekick.eventLogMaxSizeMB`, `sidekick.eventLogMaxAgeDays`
   - Stored in `~/.config/sidekick/event-logs/`
 - **Plan Visualization**: Step nodes with status indicators in mind map view
-- **Dashboard Loading Spinner**: Visual feedback during provider switches
+- **Documentation Site**: Material for MkDocs documentation with GitHub Pages deployment
 
 ### Changed
 
+- Rebranded from "Sidekick for Max" to "Sidekick Agent Hub"
 - Removed RSVP Speed Reader feature
 - Deprecated `sidekick.authMode` in favor of `sidekick.inferenceProvider` (auto-migration on first activation)
 
 ### Fixed
 
+- Codex CLI: replaced `@openai/codex-sdk` with direct CLI spawning for reliable inference
 - Multiple provider parity fixes for OpenCode and Codex CLI
 
 ## [0.9.1] - 2026-02-15

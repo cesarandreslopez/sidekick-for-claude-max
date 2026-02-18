@@ -1,8 +1,8 @@
 {
   "name": "sidekick-for-max",
   "displayName": "Sidekick Agent Hub",
-  "description": "Multi-provider AI coding assistant for VS Code — inline completions, code transforms, commit messages, and agent session monitoring for Claude Max, Claude API, OpenCode, and Codex CLI.",
-  "version": "0.10.3",
+  "description": "AI coding assistant with real-time agent monitoring — see what your AI is doing, control token costs, and never lose session context.",
+  "version": "0.10.0",
   "publisher": "CesarAndresLopez",
   "author": {
     "name": "Cesar Andres Lopez",

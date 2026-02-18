@@ -1,5 +1,7 @@
 # Generate Documentation
 
+Good documentation is valuable but tedious to write. This generates JSDoc/docstrings that actually describe what your code does — parameters, return values, edge cases — based on the implementation, not just the signature.
+
 Automatically generate JSDoc/docstrings for functions, classes, and methods.
 
 ## Usage

@@ -1,5 +1,7 @@
 # Quick Start
 
+In a few minutes you'll have inline completions while you code, real-time monitoring when your agent runs, and AI commit messages from your diffs.
+
 After [installing](installation.md) the extension and setting up a [provider](provider-setup.md), you're ready to go.
 
 ## Your First Completion

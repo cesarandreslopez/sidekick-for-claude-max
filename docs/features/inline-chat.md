@@ -1,5 +1,7 @@
 # Quick Ask (Inline Chat)
 
+Sometimes you need a quick answer or a small change without switching context. Inline chat lets you ask questions or request code modifications right in your editor — with diff preview so you can accept or reject changes before they're applied.
+
 Ask questions about code or request changes without leaving your editor.
 
 ## Usage

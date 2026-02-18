@@ -1,5 +1,7 @@
 # Session Monitor
 
+When your coding agent runs autonomously, you're flying blind — tokens burn silently, context fills up, and tool errors pile up without warning. The session monitor gives you a real-time dashboard so you can catch problems early and understand where your budget is going.
+
 Monitor your coding agent sessions in real-time with a comprehensive analytics dashboard. Supports Claude Code, OpenCode, and Codex CLI.
 
 ## Accessing the Dashboard

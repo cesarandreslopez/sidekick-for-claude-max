@@ -1,5 +1,7 @@
 # AI Commit Messages
 
+Writing good commit messages takes thought. This analyzes your actual diff and generates a meaningful message — conventional commits format or plain English — so your git history stays useful without slowing you down.
+
 Generate intelligent commit messages from your staged changes with a single click.
 
 ## Usage

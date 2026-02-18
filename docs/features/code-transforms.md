@@ -1,5 +1,7 @@
 # Code Transforms
 
+Select code, describe the change in English, get the result. Ideal for mechanical refactoring — converting promise chains to async/await, adding error handling, renaming patterns across a block — without manually rewriting every line.
+
 Transform selected code using natural language instructions.
 
 ## Usage

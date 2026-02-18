@@ -1,5 +1,7 @@
 # Kanban Board
 
+When your agent spawns subagents to work in parallel — exploring options, planning implementations, running commands — it's hard to track what's happening. The Kanban board shows every task and subagent grouped by status, so you can see progress at a glance during complex operations.
+
 Tasks and subagent spawns grouped by status in a dedicated Kanban view.
 
 ## Features
@@ -13,7 +15,7 @@ Tasks and subagent spawns grouped by status in a dedicated Kanban view.
 
 ## Subagent Tracking
 
-When Claude spawns subagents via the Task tool:
+When your agent spawns subagents via the Task tool:
 
 - Each subagent creates an "In Progress" card with the agent's description
 - Cards show agent type (Explore, Plan, Bash, etc.)

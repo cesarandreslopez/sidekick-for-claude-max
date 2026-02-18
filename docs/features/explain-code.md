@@ -1,5 +1,7 @@
 # Explain Code
 
+Unfamiliar code is everywhere — legacy systems, open source libraries, a teammate's PR. Instead of spending time tracing logic manually, get an AI explanation calibrated to your experience level, from "explain like I'm five" to expert-level analysis.
+
 Get AI-powered explanations for selected code at your preferred complexity level.
 
 ## Usage

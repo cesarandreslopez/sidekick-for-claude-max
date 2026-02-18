@@ -1,5 +1,7 @@
 # Error Analysis
 
+When your code hits an error, you want to understand it quickly — not just what went wrong, but why, and how to fix it. Error analysis provides AI-powered explanations at your preferred complexity level, from beginner-friendly to expert, with one-click fix suggestions.
+
 Understand and fix errors with AI assistance.
 
 ## Explain Error
