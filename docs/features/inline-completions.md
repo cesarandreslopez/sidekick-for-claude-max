@@ -4,6 +4,8 @@ Context-aware completions that understand your project. Unlike generic autocompl
 
 Completions appear as ghost text that you can accept with Tab.
 
+![Inline Completions demo](../images/inference.gif)
+
 ## Usage
 
 - **Automatic**: Suggestions appear after a brief pause in typing (configurable via `sidekick.debounceMs`)

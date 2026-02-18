@@ -17,6 +17,8 @@ Sidekick analyzes your coding sessions to:
 
 ## Accessing Suggestions
 
+![CLAUDE.md Suggestions](../images/claude-md-suggestions.png)
+
 Suggestions appear in a collapsible panel within the Session Analytics dashboard, with progress indicators during analysis.
 
 ## What It Analyzes

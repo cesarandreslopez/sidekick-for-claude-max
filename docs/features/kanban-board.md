@@ -6,6 +6,8 @@ Tasks and subagent spawns grouped by status in a dedicated Kanban view.
 
 ## Features
 
+![Kanban Board](../images/kanban-board.png)
+
 - **Status Columns** — tasks grouped by Pending, In Progress, and Completed
 - **Real-time Updates** — board updates as tasks and agents progress
 - **Subagent Cards** — spawned Task agents shown with cyan accent and type chips (Explore, Plan, Bash, etc.)

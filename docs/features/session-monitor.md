@@ -10,6 +10,8 @@ Click the **Agent Hub** icon in the activity bar (left sidebar) to access all mo
 
 ## Session Analytics Dashboard
 
+![Session Analytics Dashboard](../images/session-analytics-dashboard.png)
+
 The main dashboard panel provides:
 
 - **Token Usage** — real-time input/output token tracking with model-specific pricing
@@ -28,9 +30,15 @@ The main dashboard panel provides:
 
 The dashboard organizes information into three collapsible groups:
 
+![Session Activity — Context Attribution, Compactions, and Activity Timeline](../images/session-activity-timeline.png)
+
 - **Session Activity** — Activity Timeline, File Changes, Errors
 - **Performance & Cost** — Model Breakdown, Tool Analytics, Tool Efficiency, Cache Effectiveness, Advanced Burn Rate
+
+![Performance & Cost — Model Breakdown, Tool Analytics, Tool Efficiency, Cache Effectiveness](../images/performance-and-cost.png)
 - **Tasks & Recovery** — Task Performance, Recovery Patterns
+
+![Tasks & Recovery — Task Performance and Completion Tracking](../images/tasks-and-recovery.png)
 
 ## Subscription Quota Display
 

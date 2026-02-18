@@ -2,6 +2,8 @@
 
 In a few minutes you'll have inline completions while you code, real-time monitoring when your agent runs, and AI commit messages from your diffs.
 
+![Sidekick Agent Hub demo](../images/sidekick-agent-hub.gif)
+
 After [installing](installation.md) the extension and setting up a [provider](provider-setup.md), you're ready to go.
 
 ## Your First Completion
@@ -29,6 +31,8 @@ After [installing](installation.md) the extension and setting up a [provider](pr
 1. Click the **Agent Hub** icon in the activity bar (left sidebar)
 2. The Session Analytics dashboard shows token usage, costs, and activity
 3. Below it, the Mind Map and Kanban Board provide additional views
+
+![Session Analytics Dashboard](../images/session-analytics-dashboard.png)
 
 ## Key Shortcuts
 

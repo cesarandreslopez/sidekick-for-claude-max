@@ -6,6 +6,8 @@ Interactive D3.js force-directed graph showing session structure and relationshi
 
 ## Features
 
+![Mind Map](../images/mind-map.png)
+
 - **Conversation Flow** — visualizes the progression of the session
 - **File Relationships** — shows which files your agent is working with
 - **Tool Usage** — displays tool calls as connected nodes
@@ -29,3 +31,5 @@ Interactive D3.js force-directed graph showing session structure and relationshi
 ## Line Change Statistics
 
 File nodes and the Files Touched tree view show `+/-` line change counts for modified files.
+
+![Latest Files Touched](../images/files-touched.png)

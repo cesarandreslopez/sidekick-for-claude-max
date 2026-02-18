@@ -6,6 +6,8 @@ Tracks and persists architectural decisions extracted from coding sessions.
 
 ## How It Works
 
+![Decision Log](../images/decision-log.png)
+
 Sidekick monitors session activity for decision-related patterns and extracts them into a persistent log stored per-project.
 
 ## Storage
