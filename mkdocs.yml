@@ -22,6 +22,9 @@ theme:
       toggle:
         icon: material/brightness-4
         name: Switch to light mode
+  font:
+    text: JetBrains Mono
+    code: JetBrains Mono
   features:
     - navigation.tabs
     - navigation.sections
@@ -50,12 +53,16 @@ markdown_extensions:
       permalink: true
   - attr_list
   - md_in_html
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
 
 nav:
   - Home: index.md
   - Getting Started:
     - Installation: getting-started/installation.md
     - Quick Start: getting-started/quick-start.md
+    - Context Management: getting-started/context-management.md
     - Provider Setup: getting-started/provider-setup.md
   - Features:
     - Inline Completions: features/inline-completions.md

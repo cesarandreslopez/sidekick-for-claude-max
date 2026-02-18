@@ -12,14 +12,14 @@
 </p>
 
 <p align="center">
-  Multi-provider AI coding assistant for VS Code — inline completions, code transforms, commit messages, and agent session monitoring.
+  AI coding assistant with real-time agent monitoring for VS Code.
 </p>
 
 <p align="center">
   <img src="assets/all_features.gif?v=4" alt="Sidekick Agent Hub demo" width="800">
 </p>
 
-Sidekick Agent Hub brings AI coding features and agent monitoring to VS Code using your existing subscriptions. It supports **Claude Max**, **Claude API**, **OpenCode**, and **Codex CLI** — pick whichever provider you already use.
+AI coding agents are powerful but opaque — tokens burn silently, context fills up without warning, and everything is lost when a session ends. Sidekick gives you visibility into what your agent is doing, AI features that eliminate mechanical coding work, and session intelligence that preserves context across sessions. Works with your existing **Claude Max** subscription, **Claude API**, **OpenCode**, or **Codex CLI**.
 
 ## Provider Support
 
@@ -30,22 +30,30 @@ Sidekick Agent Hub brings AI coding features and agent monitoring to VS Code usi
 | **OpenCode** | Yes | Yes | Depends on provider |
 | **Codex CLI** | Yes | Yes | OpenAI API billing |
 
+## Why Am I Building This?
+
+AI coding agents are the most transformative tools I've used in my career. They can scaffold entire features, debug problems across files, and handle the mechanical parts of software engineering that used to eat hours of every day.
+
+But they're also opaque. Tokens burn in the background with no visibility. Context fills up silently until your agent starts forgetting things. And when a session ends, everything it learned — your architecture, your conventions, the decisions you made together — is just gone. The next session starts from zero.
+
+That bothers me. I want to see what my agent is doing. I want to review every tool call, understand where my tokens went, and carry context forward instead of losing it. Sidekick exists because I think the people using these agents deserve visibility into how they work — not just the output, but the process.
+
 ## Features
 
-- **Inline Completions** — ghost text suggestions as you type
-- **Code Transforms** — select code, describe changes (`Ctrl+Shift+M`)
-- **AI Commit Messages** — generate from staged changes
-- **Session Monitor** — real-time token usage, costs, activity timeline
-- **Mind Map** — interactive session structure graph
-- **Kanban Board** — task and subagent tracking
-- **Quick Ask** — inline chat (`Ctrl+I`)
-- **Code Review** — pre-commit AI analysis
-- **PR Descriptions** — auto-generate from branch diff
-- **Explain Code** — five complexity levels (`Ctrl+Shift+E`)
-- **Error Analysis** — AI-powered error explanations and fixes
-- **Generate Docs** — auto-generate JSDoc/docstrings (`Ctrl+Shift+D`)
-- **Session Handoff** — context continuity between sessions
-- **CLAUDE.md Suggestions** — optimize agent instructions from session patterns
+- **Inline Completions** — context-aware code suggestions that understand your project
+- **Code Transforms** — select code, describe changes in natural language (`Ctrl+Shift+M`)
+- **AI Commit Messages** — meaningful messages generated from your actual diff
+- **Session Monitor** — see exactly where your tokens are going before you hit quota limits
+- **Mind Map** — trace how your agent navigated the codebase during a session
+- **Kanban Board** — track tasks and subagents at a glance during complex operations
+- **Quick Ask** — inline chat for questions and code changes without switching context (`Ctrl+I`)
+- **Code Review** — catch bugs and security concerns before they reach your team
+- **PR Descriptions** — structured summaries from branch diff, ready to paste
+- **Explain Code** — AI explanations calibrated to your experience level (`Ctrl+Shift+E`)
+- **Error Analysis** — understand what went wrong, why, and how to fix it
+- **Generate Docs** — JSDoc/docstrings based on implementation, not just signatures (`Ctrl+Shift+D`)
+- **Session Handoff** — pick up where you left off instead of re-discovering everything
+- **CLAUDE.md Suggestions** — learn from session patterns to improve agent effectiveness
 
 ## Quick Install
 
@@ -66,6 +74,12 @@ Full documentation is available at the [docs site](https://cesarandreslopez.gith
 ## Contributing
 
 Contributions are welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for setup instructions and guidelines.
+
+## Community
+
+If Sidekick is useful to you, a [star on GitHub](https://github.com/cesarandreslopez/sidekick-agent-hub) helps others find it.
+
+Found a bug or have a feature idea? [Open an issue](https://github.com/cesarandreslopez/sidekick-agent-hub/issues) — all feedback is welcome.
 
 ## License
 

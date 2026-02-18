@@ -4,7 +4,7 @@ Multi-provider AI coding assistant for VS Code — inline completions, code tran
 
 ![Sidekick demo](https://raw.githubusercontent.com/cesarandreslopez/sidekick-agent-hub/main/assets/all_features.gif?v=4)
 
-Sidekick Agent Hub brings AI coding features and real-time agent monitoring to VS Code. It supports multiple providers — use whichever AI coding agent you already have.
+AI coding agents are powerful, but they run autonomously — tokens burn silently, context fills up without warning, and everything is lost when a session ends. Sidekick gives you real-time visibility into what your agent is doing, AI-powered coding features that eliminate mechanical work, and session intelligence that preserves context across sessions.
 
 | Provider | Inference | Session Monitoring | Cost |
 |----------|-----------|-------------------|------|
@@ -46,17 +46,21 @@ Sidekick Agent Hub brings AI coding features and real-time agent monitoring to V
 
 ### AI Coding
 
-- **Inline Completions** — ghost text suggestions as you type (`Ctrl+Shift+Space` to trigger manually)
+Let AI handle the mechanical work — boilerplate, commit messages, docs, PR descriptions — so you focus on design and logic.
+
+- **Inline Completions** — context-aware suggestions that understand your project, not just syntax (`Ctrl+Shift+Space` to trigger manually)
 - **Code Transforms** — select code, describe changes in natural language (`Ctrl+Shift+M`)
-- **Generate Documentation** — auto-generate JSDoc/docstrings (`Ctrl+Shift+D`)
+- **Generate Documentation** — auto-generate JSDoc/docstrings from implementation, not just signatures (`Ctrl+Shift+D`)
 - **Explain Code** — five complexity levels from ELI5 to PhD Mode (`Ctrl+Shift+E`)
 - **Quick Ask** — inline chat for questions and code changes (`Ctrl+I`)
-- **AI Commit Messages** — generate from staged changes (sparkle icon in SCM toolbar)
-- **Pre-commit Review** — AI code review with inline annotations (eye icon in SCM toolbar)
-- **PR Descriptions** — auto-generate from branch diff (PR icon in SCM toolbar)
+- **AI Commit Messages** — generate meaningful messages from staged changes (sparkle icon in SCM toolbar)
+- **Pre-commit Review** — catch bugs, security concerns, and code smells before they reach your team (eye icon in SCM toolbar)
+- **PR Descriptions** — auto-generate structured summaries from branch diff (PR icon in SCM toolbar)
 - **Error Analysis** — AI-powered error explanations and one-click fixes
 
 ### Agent Monitoring
+
+When your AI agent runs autonomously, you need to know what it's doing. Real-time dashboards, visualizations, and alerts keep you in control.
 
 - **Session Analytics Dashboard** — real-time token usage, costs, context attribution, activity timeline
 
@@ -77,6 +81,8 @@ Sidekick Agent Hub brings AI coding features and real-time agent monitoring to V
 
 ### Session Intelligence
 
+Sessions end and context is lost — the next one starts from zero. Session intelligence captures what happened so you can pick up where you left off.
+
 - **Session Handoff** — automatic context documents for session continuity
 - **Decision Log** — tracks architectural decisions from sessions
 - **CLAUDE.md Suggestions** — AI-powered session analysis for optimizing agent instructions
@@ -84,6 +90,24 @@ Sidekick Agent Hub brings AI coding features and real-time agent monitoring to V
 ![CLAUDE.md suggestions](https://raw.githubusercontent.com/cesarandreslopez/sidekick-agent-hub/main/assets/suggest_improvements_to_agent_claude_md.gif)
 
 - **Event Logging** — optional JSONL audit trail for debugging
+
+## Why Sidekick?
+
+**Works with what you already have.** If you're on Claude Max, you're already paying for the AI — Sidekick uses that subscription for inline completions, code transforms, and more. No extra API costs, no separate accounts. It also supports Claude API, OpenCode, and Codex CLI, so you're never locked into one provider.
+
+**See what your agent is doing.** When Claude Code or Codex runs autonomously, tokens burn silently and context fills up without warning. Sidekick's dashboards show real-time token usage, cost breakdowns, and quota projections — so you catch problems before you hit limits.
+
+**Never lose session context.** Long sessions produce valuable context — decisions, progress, architectural choices — that vanishes when the session ends. Session handoff and decision logging preserve that context, so your next session picks up where you left off instead of re-discovering everything.
+
+**Understand how your agent works.** Mind maps, tool inspectors, and conversation viewers let you trace exactly what happened during a session. Useful for debugging sessions that went off track, or learning from ones that went well.
+
+## Why Am I Building This?
+
+AI coding agents are the most transformative tools I've used in my career. They can scaffold entire features, debug problems across files, and handle the mechanical parts of software engineering that used to eat hours of every day.
+
+But they're also opaque. Tokens burn in the background with no visibility. Context fills up silently until your agent starts forgetting things. And when a session ends, everything it learned — your architecture, your conventions, the decisions you made together — is just gone. The next session starts from zero.
+
+That bothers me. I want to see what my agent is doing. I want to review every tool call, understand where my tokens went, and carry context forward instead of losing it. Sidekick exists because I think the people using these agents deserve visibility into how they work — not just the output, but the process.
 
 ## Key Settings
 
@@ -130,6 +154,12 @@ Model settings accept `auto` (recommended), a tier (`fast`/`balanced`/`powerful`
 ## Full Documentation
 
 For detailed guides, configuration reference, and architecture docs, visit the [documentation site](https://cesarandreslopez.github.io/sidekick-agent-hub/).
+
+## Community
+
+If Sidekick is useful to you, a [star on GitHub](https://github.com/cesarandreslopez/sidekick-agent-hub) helps others find it.
+
+Found a bug or have a feature idea? [Open an issue](https://github.com/cesarandreslopez/sidekick-agent-hub/issues) — all feedback is welcome.
 
 ## License
 
