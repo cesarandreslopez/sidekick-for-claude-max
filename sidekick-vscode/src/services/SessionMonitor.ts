@@ -24,12 +24,13 @@ import path from 'path';
 import type { SessionGroup, SessionInfo, QuotaState } from '../types/dashboard';
 import { extractTokenUsage } from './JsonlParser';
 import type { SessionProvider, SessionReader } from '../types/sessionProvider';
-import { ClaudeSessionEvent, TokenUsage, ToolCall, SessionStats, ToolAnalytics, TimelineEvent, PendingToolCall, SubagentStats, TaskState, TrackedTask, TaskStatus, PendingUserRequest, ResponseLatency, LatencyStats, CompactionEvent, ContextAttribution } from '../types/claudeSession';
+import { ClaudeSessionEvent, TokenUsage, ToolCall, SessionStats, ToolAnalytics, TimelineEvent, PendingToolCall, SubagentStats, TaskState, TrackedTask, TaskStatus, PendingUserRequest, ResponseLatency, LatencyStats, CompactionEvent, ContextAttribution, PlanState, PlanStep } from '../types/claudeSession';
 import { SessionSummary, ModelUsageRecord, ToolUsageRecord, createEmptyTokenTotals } from '../types/historicalData';
 import { estimateTokens } from '../utils/tokenEstimator';
 import { ModelPricingService } from './ModelPricingService';
 import { log, logError } from './Logger';
 import { extractTaskIdFromResult } from '../utils/taskHelpers';
+import { parsePlanMarkdown, extractProposedPlan } from '../utils/planParser';
 import type { SessionEventLogger } from './SessionEventLogger';
 
 /**
@@ -200,7 +201,7 @@ export class SessionMonitor implements vscode.Disposable {
   }> = new Map();
 
   /** Task-related tool names */
-  private static readonly TASK_TOOLS = ['TaskCreate', 'TaskUpdate', 'TaskGet', 'TaskList', 'Task', 'TodoWrite', 'TodoRead', 'UpdatePlan'];
+  private static readonly TASK_TOOLS = ['TaskCreate', 'TaskUpdate', 'TaskGet', 'TaskList', 'Task', 'TodoWrite', 'TodoRead', 'UpdatePlan', 'EnterPlanMode', 'ExitPlanMode'];
 
   /** Creates an empty context attribution object */
   private static emptyAttribution(): ContextAttribution {
@@ -243,6 +244,12 @@ export class SessionMonitor implements vscode.Disposable {
   private assistantTexts: Array<{ text: string; timestamp: string }> = [];
   private readonly MAX_ASSISTANT_TEXTS = 200;
   private readonly MAX_ASSISTANT_TEXT_LENGTH = 500;
+
+  /** Plan state tracking */
+  private planState: PlanState | null = null;
+  private planModeActive = false;
+  private planModeEnteredAt: Date | null = null;
+  private planAssistantTexts: string[] = [];
 
   // Event emitters for external consumers
   private readonly _onTokenUsage = new vscode.EventEmitter<TokenUsage>();
@@ -992,7 +999,8 @@ export class SessionMonitor implements vscode.Disposable {
       latencyStats: this.latencyRecords.length > 0 ? this.getLatencyStats() : undefined,
       compactionEvents: this.compactionEvents.length > 0 ? [...this.compactionEvents] : undefined,
       contextAttribution: { ...this.contextAttribution },
-      totalReportedCost: this.totalReportedCost > 0 ? this.totalReportedCost : undefined
+      totalReportedCost: this.totalReportedCost > 0 ? this.totalReportedCost : undefined,
+      planState: this.planState ? { ...this.planState, steps: [...this.planState.steps] } : undefined
     };
   }
 
@@ -2004,14 +2012,40 @@ export class SessionMonitor implements vscode.Disposable {
     if (event.type === 'assistant' && event.message?.content) {
       this.extractToolUsesFromContent(event.message.content, event.timestamp);
 
-      // Collect assistant text snippets for decision extraction
-      if (Array.isArray(event.message.content) && this.assistantTexts.length < this.MAX_ASSISTANT_TEXTS) {
+      // Collect assistant text snippets for decision extraction and plan extraction
+      if (Array.isArray(event.message.content)) {
         for (const block of event.message.content) {
           if (block && typeof block === 'object' && 'type' in block && block.type === 'text' && 'text' in block && typeof block.text === 'string') {
-            const text = block.text.length > this.MAX_ASSISTANT_TEXT_LENGTH
-              ? block.text.slice(0, this.MAX_ASSISTANT_TEXT_LENGTH)
-              : block.text;
-            this.assistantTexts.push({ text, timestamp: event.timestamp });
+            const fullText = block.text as string;
+
+            // Decision extraction (capped)
+            if (this.assistantTexts.length < this.MAX_ASSISTANT_TEXTS) {
+              const text = fullText.length > this.MAX_ASSISTANT_TEXT_LENGTH
+                ? fullText.slice(0, this.MAX_ASSISTANT_TEXT_LENGTH)
+                : fullText;
+              this.assistantTexts.push({ text, timestamp: event.timestamp });
+            }
+
+            // Plan mode: accumulate assistant text for later parsing
+            if (this.planModeActive) {
+              this.planAssistantTexts.push(fullText);
+            }
+
+            // Detect <proposed_plan> blocks (OpenCode / Codex)
+            const proposedPlan = extractProposedPlan(fullText);
+            if (proposedPlan) {
+              const parsed = parsePlanMarkdown(proposedPlan);
+              const source = this.provider.id === 'opencode' ? 'opencode' as const
+                : this.provider.id === 'codex' ? 'codex' as const
+                : 'claude-code' as const;
+              this.planState = {
+                active: false,
+                steps: parsed.steps,
+                title: parsed.title,
+                source,
+              };
+              log(`Proposed plan extracted: ${parsed.steps.length} steps (${source})`);
+            }
           }
         }
       }
@@ -2611,6 +2645,10 @@ export class SessionMonitor implements vscode.Disposable {
 
       this.taskState.tasks.set(agentTaskId, newTask);
       log(`Subagent spawned: ${agentTaskId} - "${description}" (${subagentType || 'unknown'})`);
+    } else if (toolUse.name === 'EnterPlanMode') {
+      this.handleEnterPlanMode(now);
+    } else if (toolUse.name === 'ExitPlanMode') {
+      this.handleExitPlanMode(now);
     } else if (toolUse.name === 'TodoWrite') {
       this.handleTodoWriteToolUse(toolUse, now);
     } else if (toolUse.name === 'UpdatePlan') {
@@ -2687,6 +2725,57 @@ export class SessionMonitor implements vscode.Disposable {
   }
 
   /**
+   * Handles entering plan mode (Claude Code EnterPlanMode or OpenCode text detection).
+   *
+   * Starts accumulating assistant text for plan extraction.
+   */
+  private handleEnterPlanMode(now: Date): void {
+    this.planModeActive = true;
+    this.planModeEnteredAt = now;
+    this.planAssistantTexts = [];
+
+    // Initialize plan state
+    this.planState = {
+      active: true,
+      steps: [],
+      enteredAt: now,
+      source: this.provider.id === 'opencode' ? 'opencode' : 'claude-code',
+    };
+
+    log(`Plan mode entered at ${now.toISOString()} (${this.provider.id})`);
+  }
+
+  /**
+   * Handles exiting plan mode (Claude Code ExitPlanMode or OpenCode text detection).
+   *
+   * Parses accumulated assistant text into plan steps.
+   */
+  private handleExitPlanMode(now: Date): void {
+    if (this.planState) {
+      this.planState.active = false;
+      this.planState.exitedAt = now;
+
+      // Parse accumulated assistant text into steps (if no steps yet from proposed_plan)
+      if (this.planState.steps.length === 0 && this.planAssistantTexts.length > 0) {
+        const combined = this.planAssistantTexts.join('\n');
+        const parsed = parsePlanMarkdown(combined);
+        if (parsed.steps.length > 0) {
+          this.planState.steps = parsed.steps;
+          if (parsed.title) {
+            this.planState.title = parsed.title;
+          }
+        }
+      }
+    }
+
+    this.planModeActive = false;
+    this.planModeEnteredAt = null;
+    this.planAssistantTexts = [];
+
+    log(`Plan mode exited at ${now.toISOString()}, ${this.planState?.steps.length ?? 0} steps extracted`);
+  }
+
+  /**
    * Handles Codex UpdatePlan snapshots by projecting them into tracked tasks.
    *
    * Each plan step is represented as a synthetic task (`plan-{index}`) so the
@@ -2758,6 +2847,28 @@ export class SessionMonitor implements vscode.Disposable {
     } else if (this.taskState.activeTaskId?.startsWith('plan-')) {
       this.taskState.activeTaskId = null;
     }
+
+    // Dual-write: populate planState for mind map plan visualization
+    const planSteps: PlanStep[] = [];
+    for (let i = 0; i < plan.length; i++) {
+      const entry = plan[i];
+      const step = String(entry.step || '').trim();
+      if (!step) continue;
+      const rawStatus = String(entry.status || 'pending').toLowerCase();
+      let stepStatus: 'pending' | 'in_progress' | 'completed';
+      if (rawStatus === 'completed') stepStatus = 'completed';
+      else if (rawStatus === 'in_progress' || rawStatus === 'in-progress') stepStatus = 'in_progress';
+      else stepStatus = 'pending';
+      planSteps.push({ id: `step-${i}`, description: step, status: stepStatus });
+    }
+
+    const hasActive = planSteps.some(s => s.status === 'in_progress' || s.status === 'pending');
+    this.planState = {
+      active: hasActive,
+      steps: planSteps,
+      title: 'Plan',
+      source: 'codex',
+    };
   }
 
   /**
@@ -3077,5 +3188,9 @@ export class SessionMonitor implements vscode.Disposable {
       activeTaskId: null
     };
     this.pendingTaskCreates.clear();
+    this.planState = null;
+    this.planModeActive = false;
+    this.planModeEnteredAt = null;
+    this.planAssistantTexts = [];
   }
 }

@@ -2,8 +2,8 @@
 
 > **Usage:** Copy everything below the line into a Claude Code or OpenCode session.
 > The prompt exercises every Sidekick monitoring view: Session Analytics
-> (including the Decisions panel), Kanban Board, Mind Map, Latest Files Touched,
-> and Subagents.
+> (including the Decisions panel), Kanban Board, Mind Map (including plan
+> visualization), Latest Files Touched, and Subagents.
 
 ---
 
@@ -81,7 +81,58 @@ Create and manage tasks with dependencies:
 
 11. Use **TaskUpdate** to mark Task C as `completed`.
 
-### Section 4 — Decision Extraction (Session Analytics → Decisions panel)
+### Section 4 — Plan Visualization (Mind Map plan subgraph)
+
+Exercise plan mode so the Mind Map renders a plan root node with plan-step children.
+The assistant text during plan mode is parsed for checkboxes, numbered lists, and
+phase headers. After exiting plan mode, check the Mind Map for teal-colored plan
+nodes connected by dashed sequence links.
+
+1. Use **EnterPlanMode** to start a planning session.
+
+2. While in plan mode, output a structured plan using checkbox markdown. Write it
+   as your assistant response (do **not** use a tool — the plan content comes from
+   your text output). Use this exact format:
+
+   ```
+   ## Refactor Plan
+
+   ### Phase 1: Analysis
+   - [ ] Read all existing source files
+   - [ ] Identify shared utility functions
+
+   ### Phase 2: Implementation
+   - [ ] Extract shared utilities into src/utils.ts
+   - [ ] Update math.ts imports
+   - [ ] Update strings.ts imports
+
+   ### Phase 3: Validation
+   - [x] Run existing tests
+   - [ ] Add tests for new utils module
+   ```
+
+3. Use **ExitPlanMode** to complete the planning cycle.
+
+**What to verify in Mind Map:**
+- A teal **Plan** root node labeled "Refactor Plan" connected to session root
+- Seven **plan-step** nodes (one per checkbox item) connected to the plan root
+- Dashed teal **sequence links** between consecutive steps (step-0 → step-1 → … → step-6)
+- Steps carry status coloring: completed steps (step 5, "Run existing tests") appear
+  dimmed; pending steps have a yellow stroke
+- Hovering a step node shows its description and status in the tooltip
+- The legend includes a "Plan" entry with a teal dot
+- If tasks from Section 3 are still visible, plan steps whose descriptions match
+  task subjects will have cross-reference links (dashed orange) to those task nodes
+
+> **OpenCode note:** In OpenCode, plan content appears inside `<proposed_plan>` XML
+> tags in assistant messages rather than via `EnterPlanMode`/`ExitPlanMode` tool calls.
+> The parser extracts and structures the inner markdown identically.
+>
+> **Codex note:** Codex uses `UpdatePlan` tool calls with a structured `{ step, status }[]`
+> array. These are mapped directly to plan steps (no markdown parsing) and also appear
+> as task nodes on the Kanban Board.
+
+### Section 5 — Decision Extraction (Session Analytics → Decisions panel)
 
 Exercise all four decision extraction sources so the Decisions section populates:
 
@@ -89,9 +140,9 @@ Exercise all four decision extraction sources so the Decisions section populates
    - Use **Bash** to run: `npm install --no-package-lock nonexistent-pkg-abc123` (will fail)
    - Use **Bash** to run: `echo "Fallback: skipping nonexistent package"` (succeeds)
 
-2. **Plan mode** — Enter and exit plan mode:
-   - Use **EnterPlanMode** to start a planning session.
-   - After reviewing the codebase, use **ExitPlanMode** to complete the planning cycle.
+2. **Plan mode** — The plan mode cycle from Section 4 above already generates a
+   plan-mode decision entry. No additional action needed here; just verify the
+   decision appears.
 
 3. **User question** — Ask the user to choose between options:
    - Use **AskUserQuestion** with:
@@ -105,7 +156,7 @@ After completing these steps, open Session Analytics → scroll to the **Decisio
 You should see entries with source badges: `recovery pattern`, `plan mode`, `user question`, and `text pattern`.
 Use the search box to filter by keyword (e.g., "vitest").
 
-### Section 5 — Bash Commands & Search (Mind Map command/URL nodes + Session Analytics)
+### Section 6 — Bash Commands & Search (Mind Map command/URL nodes + Session Analytics)
 
 1. Use **Bash** to run: `wc -l src/*.ts`
 
@@ -120,7 +171,7 @@ Use the search box to filter by keyword (e.g., "vitest").
 
 5. Use **Read** to read `summary.txt`.
 
-### Section 6 — Subagents (Subagent Tree + Mind Map subagent nodes)
+### Section 7 — Subagents (Subagent Tree + Mind Map subagent nodes)
 
 Spawn three subagents using the **Task** tool. Each must use a different `subagent_type` so the Subagent Tree classifies them differently:
 
@@ -132,7 +183,7 @@ Spawn three subagents using the **Task** tool. Each must use a different `subage
 
 Wait for all three to complete before continuing.
 
-### Section 7 — Cleanup
+### Section 8 — Cleanup
 
 Delete the files created during this test:
 
@@ -141,7 +192,7 @@ rm -f src/math.ts src/strings.ts src/index.ts src/bad.ts src/math.test.ts src/st
 rmdir src/ 2>/dev/null
 ```
 
-Then say: "Session monitor test complete. All 5 Sidekick views should now have data."
+Then say: "Session monitor test complete. All Sidekick views should now have data."
 
 ---
 
@@ -150,11 +201,12 @@ Then say: "Session monitor test complete. All 5 Sidekick views should now have d
 | View | Sections that exercise it |
 |---|---|
 | **Session Analytics** | All sections (token usage, tool success/failure rates, timeline, context) |
-| **Session Analytics → Decisions** | Section 4 (recovery patterns, plan mode, user questions, text patterns) |
+| **Session Analytics → Decisions** | Section 5 (recovery patterns, plan mode, user questions, text patterns) |
 | **Kanban Board** | Section 3 (TaskCreate, TaskUpdate lifecycle with blockedBy) |
-| **Mind Map** | Section 1 (file + directory nodes), Section 5 (command + URL nodes), Section 6 (subagent nodes) |
+| **Mind Map** | Section 1 (file + directory nodes), Section 4 (plan + plan-step nodes), Section 6 (command + URL nodes), Section 7 (subagent nodes) |
+| **Mind Map → Plan Subgraph** | Section 4 (plan root, plan-step nodes with status, sequence links, task cross-refs) |
 | **Latest Files Touched** | Section 1 (Write, Read, Edit), Section 2 (Write, Bash), Section 3 (Write) |
-| **Subagents** | Section 6 (Explore, Plan, Bash agent types) |
+| **Subagents** | Section 7 (Explore, Plan, Bash agent types) |
 
 ## Tools Used
 

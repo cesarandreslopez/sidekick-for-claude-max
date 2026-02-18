@@ -399,6 +399,49 @@ export interface LatencyStats {
 }
 
 /**
+ * A single step in a plan extracted from plan mode.
+ */
+export interface PlanStep {
+  /** Step identifier (e.g., "step-0", "step-1") */
+  id: string;
+
+  /** Step text/description */
+  description: string;
+
+  /** Current step status */
+  status: 'pending' | 'in_progress' | 'completed';
+
+  /** Optional phase grouping (from markdown headers) */
+  phase?: string;
+}
+
+/**
+ * State of a plan extracted from plan mode.
+ *
+ * Captures the structured plan content from Claude Code's EnterPlanMode/ExitPlanMode,
+ * OpenCode's proposed_plan blocks, or Codex's UpdatePlan tool calls.
+ */
+export interface PlanState {
+  /** Whether plan mode is currently active */
+  active: boolean;
+
+  /** Extracted plan steps */
+  steps: PlanStep[];
+
+  /** Plan title (from first H1/H2 header) */
+  title?: string;
+
+  /** When plan mode was entered */
+  enteredAt?: Date;
+
+  /** When plan mode was exited */
+  exitedAt?: Date;
+
+  /** Which provider generated the plan */
+  source: 'claude-code' | 'opencode' | 'codex';
+}
+
+/**
  * Aggregated statistics for a Claude Code session.
  *
  * Provides rollup metrics for token consumption, model usage,
@@ -452,6 +495,9 @@ export interface SessionStats {
 
   /** Task tracking state for the session */
   taskState?: TaskState;
+
+  /** Plan state extracted from plan mode */
+  planState?: PlanState;
 
   /** Response latency statistics */
   latencyStats?: LatencyStats;

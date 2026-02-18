@@ -7,8 +7,8 @@
  * @module services/MindMapDataService
  */
 
-import { SessionStats, ToolCall, TimelineEvent, SubagentStats, TaskState, TrackedTask } from '../types/claudeSession';
-import { GraphNode, GraphLink, GraphData, TaskNodeStatus } from '../types/mindMap';
+import { SessionStats, ToolCall, TimelineEvent, SubagentStats, TaskState, TrackedTask, PlanState } from '../types/claudeSession';
+import { GraphNode, GraphLink, GraphData, TaskNodeStatus, PlanStepStatus } from '../types/mindMap';
 import { calculateLineChanges } from '../utils/lineChangeCalculator';
 import { log } from './Logger';
 
@@ -197,6 +197,11 @@ export class MindMapDataService {
     // Add task nodes from taskState
     if (stats.taskState) {
       this.addTaskNodes(stats.taskState, nodes, links, nodeIds);
+    }
+
+    // Add plan nodes from planState
+    if (stats.planState && stats.planState.steps.length > 0) {
+      this.addPlanNodes(stats.planState, nodes, links, nodeIds, stats.taskState);
     }
 
     // Add subagent nodes with hierarchical structure
@@ -649,6 +654,115 @@ export class MindMapDataService {
           target: taskNodeId,
           linkType: 'task-dependency',
         });
+      }
+    }
+  }
+
+  /**
+   * Adds plan nodes from PlanState to the graph.
+   *
+   * Creates:
+   * - Plan root node linked from session-root
+   * - Plan-step nodes linked from plan root
+   * - Sequential links between consecutive steps
+   * - Cross-reference links from plan steps to matching task nodes
+   *
+   * @param planState - Plan state containing steps
+   * @param nodes - Nodes array to add to
+   * @param links - Links array to add to
+   * @param nodeIds - Set of existing node IDs
+   * @param taskState - Optional task state for cross-referencing
+   */
+  private static addPlanNodes(
+    planState: PlanState,
+    nodes: GraphNode[],
+    links: GraphLink[],
+    nodeIds: Set<string>,
+    taskState?: TaskState
+  ): void {
+    // Create plan root node
+    const planRootId = 'plan-root';
+    if (!nodeIds.has(planRootId)) {
+      nodes.push({
+        id: planRootId,
+        label: planState.title || 'Plan',
+        fullPath: `${planState.title || 'Plan'} (${planState.steps.length} steps)`,
+        type: 'plan',
+        count: planState.steps.length,
+      });
+      nodeIds.add(planRootId);
+      links.push({ source: 'session-root', target: planRootId });
+    }
+
+    // Create plan-step nodes
+    for (let i = 0; i < planState.steps.length; i++) {
+      const step = planState.steps[i];
+      const stepNodeId = `plan-step-${i}`;
+
+      if (!nodeIds.has(stepNodeId)) {
+        const stepStatus: PlanStepStatus = step.status;
+        const phaseLabel = step.phase ? `[${step.phase}] ` : '';
+        nodes.push({
+          id: stepNodeId,
+          label: this.truncateLabel(`${phaseLabel}${step.description}`, 30),
+          fullPath: step.description,
+          type: 'plan-step',
+          planStepStatus: stepStatus,
+        });
+        nodeIds.add(stepNodeId);
+
+        // Link step to plan root
+        links.push({ source: planRootId, target: stepNodeId });
+
+        // Sequential link to previous step
+        if (i > 0) {
+          links.push({
+            source: `plan-step-${i - 1}`,
+            target: stepNodeId,
+            linkType: 'plan-sequence',
+          });
+        }
+      }
+    }
+
+    // Cross-reference: link plan steps to matching task nodes
+    if (taskState) {
+      const tasks = Array.from(taskState.tasks.values()).filter(t => t.status !== 'deleted');
+
+      for (let i = 0; i < planState.steps.length; i++) {
+        const step = planState.steps[i];
+        const stepNodeId = `plan-step-${i}`;
+        if (!nodeIds.has(stepNodeId)) continue;
+
+        // For Codex: direct index mapping (plan-{i} task IDs correspond to step-{i})
+        if (planState.source === 'codex') {
+          const codexTaskId = `plan-${i}`;
+          const taskNodeId = `task-${codexTaskId}`;
+          if (nodeIds.has(taskNodeId)) {
+            links.push({
+              source: stepNodeId,
+              target: taskNodeId,
+              linkType: 'task-action',
+            });
+            continue;
+          }
+        }
+
+        // Fuzzy match: case-insensitive substring of step description against task subjects
+        const stepLower = step.description.toLowerCase();
+        for (const task of tasks) {
+          const taskNodeId = `task-${task.taskId}`;
+          if (!nodeIds.has(taskNodeId)) continue;
+          const subjectLower = task.subject.toLowerCase();
+          if (stepLower.includes(subjectLower) || subjectLower.includes(stepLower)) {
+            links.push({
+              source: stepNodeId,
+              target: taskNodeId,
+              linkType: 'task-action',
+            });
+            break; // One match per step
+          }
+        }
       }
     }
   }
