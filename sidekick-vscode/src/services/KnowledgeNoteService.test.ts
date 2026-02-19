@@ -307,7 +307,7 @@ describe('KnowledgeNoteService', () => {
       const service = createService();
       await service.initialize();
 
-      const id = service.addNote({
+      service.addNote({
         noteType: 'gotcha',
         content: 'Old note',
         filePath: 'src/old.ts',
