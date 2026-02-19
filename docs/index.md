@@ -1,10 +1,10 @@
 # Sidekick Agent Hub
 
 <p align="center">
-  <img src="images/icon-128.png" alt="Sidekick Agent Hub" width="128" height="128">
+  <img src="images/social-preview.png" alt="Sidekick Agent Hub — AI coding assistant with real-time agent monitoring" width="100%" style="max-width: 800px; border-radius: 8px;">
 </p>
 
-**AI coding assistant with real-time agent monitoring for VS Code** — inline completions, code transforms, commit messages, and agent session monitoring.
+**Inline completions, code transforms, commit messages, and agent session monitoring for VS Code.**
 
 ![Sidekick Agent Hub demo](images/sidekick-agent-hub.gif)
 
