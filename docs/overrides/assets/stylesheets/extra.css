@@ -5,3 +5,82 @@
   border-radius: 0.4rem;
   padding: 2px;
 }
+
+/* Mermaid expand-to-modal */
+.mermaid-wrapper {
+  position: relative;
+}
+.mermaid-expand-btn {
+  position: absolute;
+  top: 0.4rem;
+  right: 0.4rem;
+  background: var(--md-default-bg-color, #fff);
+  border: 1px solid var(--md-default-fg-color--lightest, #ddd);
+  border-radius: 4px;
+  cursor: pointer;
+  padding: 4px 6px;
+  font-size: 0.75rem;
+  line-height: 1;
+  opacity: 0;
+  transition: opacity 0.15s;
+  z-index: 1;
+  color: var(--md-default-fg-color--light, #666);
+}
+.mermaid-wrapper:hover .mermaid-expand-btn {
+  opacity: 1;
+}
+.mermaid-expand-btn:hover {
+  background: var(--md-accent-fg-color, #7c4dff);
+  color: #fff;
+  border-color: transparent;
+}
+.mermaid-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  background: rgba(0, 0, 0, 0.82);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: zoom-out;
+  animation: mermaid-fade-in 0.15s ease;
+}
+@keyframes mermaid-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.mermaid-modal-content {
+  width: 90vw;
+  max-height: 92vh;
+  overflow: auto;
+  background: var(--md-default-bg-color, #fff);
+  border-radius: 8px;
+  padding: 2rem;
+  cursor: default;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+}
+/* The .mermaid element (shadow DOM host) must stretch to fill the modal.
+   The SVG inside has width="100%" so it scales with its host. */
+.mermaid-modal-content > .mermaid {
+  width: 100%;
+  max-width: 100%;
+  display: flex;
+  justify-content: center;
+}
+.mermaid-modal-close {
+  position: fixed;
+  top: 1rem;
+  right: 1.5rem;
+  z-index: 10000;
+  background: none;
+  border: none;
+  color: #fff;
+  font-size: 2rem;
+  cursor: pointer;
+  line-height: 1;
+  opacity: 0.7;
+  transition: opacity 0.15s;
+}
+.mermaid-modal-close:hover {
+  opacity: 1;
+}
