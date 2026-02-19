@@ -5,6 +5,20 @@ All notable changes to the Sidekick Agent Hub VS Code extension will be document
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.3] - 2026-02-19
+
+### Added
+
+- **Mind Map Circular Layout**: Toggle between the organic force-directed layout and a clean static circular layout
+  - New "Circular" button in the mind map header to switch layout modes
+  - Session node centered with peripheral nodes arranged on a circle, grouped by type and sorted alphabetically
+  - Curved bezier links between peripheral nodes, straight radial spokes from session to peripherals
+  - Smooth 600ms animated transitions when toggling between layouts
+  - Drag disabled in circular mode; zoom and pan still work
+  - "Reset Layout" recalculates circular positions when in circular mode
+  - New data arriving in circular mode snaps to recalculated positions
+  - Window resize recalculates layout in both modes
+
 ## [0.10.2] - 2026-02-19
 
 ### Fixed

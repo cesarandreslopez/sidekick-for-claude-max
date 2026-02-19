@@ -544,6 +544,52 @@ export class MindMapViewProvider implements vscode.WebviewViewProvider, vscode.D
       height: 10px;
       border-radius: 50%;
     }
+
+    .layout-active {
+      background: var(--vscode-button-background) !important;
+      color: var(--vscode-button-foreground) !important;
+    }
+
+    .link-path {
+      fill: none;
+      stroke: var(--vscode-panel-border);
+      stroke-opacity: 0.6;
+      stroke-width: 1.5;
+    }
+
+    .link-path.latest {
+      stroke: var(--vscode-charts-yellow, #FFD700);
+      stroke-opacity: 1;
+      stroke-width: 3;
+      filter: drop-shadow(0 0 4px var(--vscode-charts-yellow, #FFD700));
+    }
+
+    .link-path.task-action {
+      stroke: var(--vscode-charts-orange, #FF6B6B);
+      stroke-opacity: 0.5;
+      stroke-dasharray: 4, 2;
+    }
+
+    .link-path.task-dependency {
+      stroke: var(--vscode-charts-red, #D0021B);
+      stroke-opacity: 0.7;
+      stroke-dasharray: 6, 3;
+      stroke-width: 2;
+    }
+
+    .link-path.plan-sequence {
+      stroke: #00BCD4;
+      stroke-opacity: 0.5;
+      stroke-dasharray: 3, 2;
+    }
+
+    .node.circular-mode {
+      cursor: default;
+    }
+
+    .node.circular-mode:active {
+      cursor: default;
+    }
   </style>
 </head>
 <body>
@@ -551,6 +597,7 @@ export class MindMapViewProvider implements vscode.WebviewViewProvider, vscode.D
     <img src="${iconUri}" alt="Sidekick" />
     <h1>Mind Map</h1>
     <div class="header-actions">
+      <button id="toggle-layout" class="icon-button" type="button" title="Toggle circular layout" disabled>Circular</button>
       <button id="reset-layout" class="icon-button" type="button" title="Reset graph layout" disabled>Reset Layout</button>
       <span id="status" class="status">No Session</span>
     </div>
@@ -737,6 +784,10 @@ export class MindMapViewProvider implements vscode.WebviewViewProvider, vscode.D
       const legendEl = document.getElementById('legend');
       const tooltipEl = document.getElementById('tooltip');
       const resetLayoutEl = document.getElementById('reset-layout');
+      const toggleLayoutEl = document.getElementById('toggle-layout');
+
+      // Layout mode state
+      let layoutMode = 'force'; // 'force' | 'circular'
 
       // D3 elements
       let svg, g, simulation, linkGroup, nodeGroup, labelGroup, changeGroup, zoom;
@@ -745,6 +796,279 @@ export class MindMapViewProvider implements vscode.WebviewViewProvider, vscode.D
       let previousNodeIds = new Set();
       let previousLinkIds = new Set();
       let previousLatestLinkId = null;
+
+      // === Circular Layout Functions ===
+
+      /**
+       * Node type order for grouping on the circle.
+       */
+      var CIRCULAR_TYPE_ORDER = ['tool', 'file', 'directory', 'command', 'url', 'subagent', 'task', 'plan', 'plan-step', 'todo'];
+
+      /**
+       * Calculates circular positions for all nodes.
+       * Session node goes to center, others on a circle grouped by type.
+       */
+      function calculateCircularPositions(nodes) {
+        var width = containerEl.clientWidth;
+        var height = containerEl.clientHeight;
+        var centerX = width / 2;
+        var centerY = height / 2;
+        var radius = Math.max(80, Math.min(width, height) * 0.35);
+        var positions = {};
+
+        var sessionNode = nodes.find(function(n) { return n.type === 'session'; });
+        var peripheralNodes = nodes.filter(function(n) { return n.type !== 'session'; });
+
+        if (sessionNode) {
+          positions[sessionNode.id] = { x: centerX, y: centerY };
+        }
+
+        // Sort by type group then alphabetically by label within each group
+        peripheralNodes.sort(function(a, b) {
+          var aIdx = CIRCULAR_TYPE_ORDER.indexOf(a.type);
+          var bIdx = CIRCULAR_TYPE_ORDER.indexOf(b.type);
+          if (aIdx === -1) aIdx = CIRCULAR_TYPE_ORDER.length;
+          if (bIdx === -1) bIdx = CIRCULAR_TYPE_ORDER.length;
+          if (aIdx !== bIdx) return aIdx - bIdx;
+          return a.label.localeCompare(b.label);
+        });
+
+        var total = peripheralNodes.length;
+        peripheralNodes.forEach(function(node, i) {
+          var angle = -Math.PI / 2 + (2 * Math.PI * i) / Math.max(1, total);
+          positions[node.id] = {
+            x: centerX + Math.cos(angle) * radius,
+            y: centerY + Math.sin(angle) * radius
+          };
+        });
+
+        return positions;
+      }
+
+      /**
+       * Computes SVG path d attribute for a curved link.
+       * Session-to-peripheral links are straight; peripheral-to-peripheral use quadratic bezier.
+       */
+      function computeCurvedPath(link, positions) {
+        var sourceId = link.source.id || link.source;
+        var targetId = link.target.id || link.target;
+        var s = positions[sourceId];
+        var t = positions[targetId];
+        if (!s || !t) return '';
+
+        var sourceNode = currentNodes.find(function(n) { return n.id === sourceId; });
+        var targetNode = currentNodes.find(function(n) { return n.id === targetId; });
+        var sourceIsSession = sourceNode && sourceNode.type === 'session';
+        var targetIsSession = targetNode && targetNode.type === 'session';
+
+        if (sourceIsSession || targetIsSession) {
+          // Straight line for session-to-peripheral
+          return 'M ' + s.x + ' ' + s.y + ' L ' + t.x + ' ' + t.y;
+        }
+
+        // Quadratic bezier: control point pulled 50% toward center
+        var width = containerEl.clientWidth;
+        var height = containerEl.clientHeight;
+        var cx = width / 2;
+        var cy = height / 2;
+        var midX = (s.x + t.x) / 2;
+        var midY = (s.y + t.y) / 2;
+        var ctrlX = midX + (cx - midX) * 0.5;
+        var ctrlY = midY + (cy - midY) * 0.5;
+
+        return 'M ' + s.x + ' ' + s.y + ' Q ' + ctrlX + ' ' + ctrlY + ' ' + t.x + ' ' + t.y;
+      }
+
+      /**
+       * Gets CSS class for a link path based on its type and properties.
+       */
+      function getLinkPathClass(d) {
+        var classes = ['link-path'];
+        if (d.isLatest) classes.push('latest');
+        if (d.linkType === 'task-action') classes.push('task-action');
+        if (d.linkType === 'task-dependency') classes.push('task-dependency');
+        if (d.linkType === 'plan-sequence') classes.push('plan-sequence');
+        return classes.join(' ');
+      }
+
+      /**
+       * Renders curved path links for circular layout (snap, no animation).
+       */
+      function renderCircularLinks(positions) {
+        // Hide <line> elements
+        linkGroup.selectAll('line').style('display', 'none');
+
+        // Remove old paths
+        linkGroup.selectAll('path').remove();
+
+        // Create <path> elements
+        linkGroup.selectAll('path')
+          .data(currentLinks, function(d) {
+            var sid = d.source.id || d.source;
+            var tid = d.target.id || d.target;
+            return sid + '-' + tid;
+          })
+          .enter()
+          .append('path')
+          .attr('class', function(d) { return getLinkPathClass(d); })
+          .attr('stroke-width', function(d) {
+            if (d.isLatest) return 3;
+            if (d.linkType === 'task-dependency') return 2;
+            return 1.5;
+          })
+          .attr('d', function(d) { return computeCurvedPath(d, positions); });
+
+        linkGroup.selectAll('path.latest').raise();
+      }
+
+      /**
+       * Renders curved path links with transition animation.
+       */
+      function transitionLinksToCircular(positions, duration) {
+        // Hide <line> elements
+        linkGroup.selectAll('line').style('display', 'none');
+
+        // Remove old paths
+        linkGroup.selectAll('path').remove();
+
+        // Create paths starting from current node positions (straight lines from source)
+        var paths = linkGroup.selectAll('path')
+          .data(currentLinks, function(d) {
+            var sid = d.source.id || d.source;
+            var tid = d.target.id || d.target;
+            return sid + '-' + tid;
+          })
+          .enter()
+          .append('path')
+          .attr('class', function(d) { return getLinkPathClass(d); })
+          .attr('stroke-width', function(d) {
+            if (d.isLatest) return 3;
+            if (d.linkType === 'task-dependency') return 2;
+            return 1.5;
+          })
+          .attr('d', function(d) {
+            // Start at current node positions (straight line)
+            var sourceId = d.source.id || d.source;
+            var targetId = d.target.id || d.target;
+            var sNode = currentNodes.find(function(n) { return n.id === sourceId; });
+            var tNode = currentNodes.find(function(n) { return n.id === targetId; });
+            var sx = sNode ? sNode.x : 0;
+            var sy = sNode ? sNode.y : 0;
+            var tx = tNode ? tNode.x : 0;
+            var ty = tNode ? tNode.y : 0;
+            return 'M ' + sx + ' ' + sy + ' L ' + tx + ' ' + ty;
+          });
+
+        // Transition to curved paths
+        paths.transition()
+          .duration(duration)
+          .ease(d3.easeCubicInOut)
+          .attr('d', function(d) { return computeCurvedPath(d, positions); });
+
+        linkGroup.selectAll('path.latest').raise();
+      }
+
+      /**
+       * Applies circular layout - stops simulation, positions nodes on circle.
+       */
+      function applyCircularLayout(animate) {
+        if (!simulation || currentNodes.length === 0) return;
+
+        simulation.stop();
+        var positions = calculateCircularPositions(currentNodes);
+        var duration = animate ? 600 : 0;
+
+        // Add circular-mode class to nodes
+        nodeGroup.selectAll('circle').classed('circular-mode', true);
+
+        if (duration > 0) {
+          // Animate nodes to target positions
+          nodeGroup.selectAll('circle')
+            .transition()
+            .duration(duration)
+            .ease(d3.easeCubicInOut)
+            .attr('cx', function(d) { return positions[d.id].x; })
+            .attr('cy', function(d) { return positions[d.id].y; });
+
+          labelGroup.selectAll('text')
+            .transition()
+            .duration(duration)
+            .ease(d3.easeCubicInOut)
+            .attr('x', function(d) { return positions[d.id].x; })
+            .attr('y', function(d) { return positions[d.id].y + calculateNodeSize(d) + 12; });
+
+          changeGroup.selectAll('text')
+            .transition()
+            .duration(duration)
+            .ease(d3.easeCubicInOut)
+            .attr('x', function(d) { return positions[d.id] ? positions[d.id].x : 0; })
+            .attr('y', function(d) { return positions[d.id] ? positions[d.id].y + calculateNodeSize(d) + 22 : 0; });
+
+          transitionLinksToCircular(positions, duration);
+        } else {
+          // Snap nodes to target positions
+          nodeGroup.selectAll('circle')
+            .attr('cx', function(d) { return positions[d.id].x; })
+            .attr('cy', function(d) { return positions[d.id].y; });
+
+          labelGroup.selectAll('text')
+            .attr('x', function(d) { return positions[d.id].x; })
+            .attr('y', function(d) { return positions[d.id].y + calculateNodeSize(d) + 12; });
+
+          changeGroup.selectAll('text')
+            .attr('x', function(d) { return positions[d.id] ? positions[d.id].x : 0; })
+            .attr('y', function(d) { return positions[d.id] ? positions[d.id].y + calculateNodeSize(d) + 22 : 0; });
+
+          renderCircularLinks(positions);
+        }
+
+        // Update node data positions so zoom/pan works
+        currentNodes.forEach(function(n) {
+          if (positions[n.id]) {
+            n.x = positions[n.id].x;
+            n.y = positions[n.id].y;
+            n.fx = positions[n.id].x;
+            n.fy = positions[n.id].y;
+            n.vx = 0;
+            n.vy = 0;
+          }
+        });
+
+        // Center the view
+        centerOnSession({ duration: animate ? 600 : 250, preserveZoom: false, scale: 1 });
+      }
+
+      /**
+       * Applies force layout - removes paths, restores lines, restarts simulation.
+       */
+      function applyForceLayout(animate) {
+        if (!simulation || currentNodes.length === 0) return;
+
+        // Remove <path> links
+        linkGroup.selectAll('path').remove();
+
+        // Restore <line> elements
+        linkGroup.selectAll('line').style('display', null);
+
+        // Remove circular-mode class
+        nodeGroup.selectAll('circle').classed('circular-mode', false);
+
+        // Clear fixed positions
+        currentNodes.forEach(function(n) {
+          n.fx = null;
+          n.fy = null;
+        });
+
+        // Restart simulation
+        applyForceConfig(currentNodes.length);
+        simulation.nodes(currentNodes);
+        simulation.force('link').links(currentLinks);
+        simulation.alpha(1).alphaTarget(0).restart();
+
+        if (animate) {
+          centerOnSession({ duration: 600, preserveZoom: false, scale: 1 });
+        }
+      }
 
       /**
        * Initializes the D3 force simulation.
@@ -837,6 +1161,11 @@ export class MindMapViewProvider implements vscode.WebviewViewProvider, vscode.D
           return;
         }
 
+        if (layoutMode === 'circular') {
+          applyCircularLayout(true);
+          return;
+        }
+
         var width = containerEl.clientWidth;
         var height = containerEl.clientHeight;
         var centerX = width / 2;
@@ -903,17 +1232,20 @@ export class MindMapViewProvider implements vscode.WebviewViewProvider, vscode.D
        */
       function drag(simulation) {
         function dragstarted(event) {
+          if (layoutMode === 'circular') return;
           if (!event.active) simulation.alphaTarget(0.3).restart();
           event.subject.fx = event.subject.x;
           event.subject.fy = event.subject.y;
         }
 
         function dragged(event) {
+          if (layoutMode === 'circular') return;
           event.subject.fx = event.x;
           event.subject.fy = event.y;
         }
 
         function dragended(event) {
+          if (layoutMode === 'circular') return;
           if (!event.active) simulation.alphaTarget(0);
           event.subject.fx = null;
           event.subject.fy = null;
@@ -1140,16 +1472,25 @@ export class MindMapViewProvider implements vscode.WebviewViewProvider, vscode.D
             return '<tspan class="add">+' + adds + '</tspan> <tspan class="del">-' + dels + '</tspan>';
           });
 
-        // Update simulation
-        applyForceConfig(nodes.length);
-        simulation.nodes(nodes);
-        simulation.force('link').links(links);
-        simulation.alpha(0.3).restart();
+        // Update simulation / layout
+        if (layoutMode === 'circular') {
+          // In circular mode: hide line links, stop sim, snap to circular positions
+          linkGroup.selectAll('line').style('display', 'none');
+          simulation.nodes(nodes);
+          simulation.force('link').links(links);
+          simulation.stop();
+          applyCircularLayout(false);
+        } else {
+          applyForceConfig(nodes.length);
+          simulation.nodes(nodes);
+          simulation.force('link').links(links);
+          simulation.alpha(0.3).restart();
 
-        // Check for new activity and focus on it
-        setTimeout(function() {
-          focusOnNewActivity(nodes, links);
-        }, 400);
+          // Check for new activity and focus on it
+          setTimeout(function() {
+            focusOnNewActivity(nodes, links);
+          }, 400);
+        }
       }
 
       /**
@@ -1248,6 +1589,9 @@ export class MindMapViewProvider implements vscode.WebviewViewProvider, vscode.D
         if (resetLayoutEl) {
           resetLayoutEl.disabled = show;
         }
+        if (toggleLayoutEl) {
+          toggleLayoutEl.disabled = show;
+        }
       }
 
       /**
@@ -1289,15 +1633,36 @@ export class MindMapViewProvider implements vscode.WebviewViewProvider, vscode.D
           const width = containerEl.clientWidth;
           const height = containerEl.clientHeight;
           svg.attr('width', width).attr('height', height);
-          simulation.force('center', d3.forceCenter(width / 2, height / 2));
-          applyForceConfig(currentNodes.length);
-          simulation.alpha(0.3).restart();
+
+          if (layoutMode === 'circular') {
+            applyCircularLayout(false);
+          } else {
+            simulation.force('center', d3.forceCenter(width / 2, height / 2));
+            applyForceConfig(currentNodes.length);
+            simulation.alpha(0.3).restart();
+          }
         }
       });
 
       if (resetLayoutEl) {
         resetLayoutEl.addEventListener('click', function() {
           resetLayout();
+        });
+      }
+
+      if (toggleLayoutEl) {
+        toggleLayoutEl.addEventListener('click', function() {
+          if (layoutMode === 'force') {
+            layoutMode = 'circular';
+            toggleLayoutEl.textContent = 'Force';
+            toggleLayoutEl.classList.add('layout-active');
+            applyCircularLayout(true);
+          } else {
+            layoutMode = 'force';
+            toggleLayoutEl.textContent = 'Circular';
+            toggleLayoutEl.classList.remove('layout-active');
+            applyForceLayout(true);
+          }
         });
       }
 
