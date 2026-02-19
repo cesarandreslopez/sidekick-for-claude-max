@@ -213,8 +213,10 @@ export class NotificationTriggerService implements vscode.Disposable {
 
   /**
    * Handles tool call events, matching against triggers.
+   * Skips notifications during initial session replay (historical events).
    */
   private handleToolCall(call: ToolCall): void {
+    if (this.sessionMonitor.isReplaying) return;
     // Track errors for burst detection
     if (call.isError) {
       this.recentToolErrors++;
@@ -281,8 +283,10 @@ export class NotificationTriggerService implements vscode.Disposable {
 
   /**
    * Handles compaction events.
+   * Skips notifications during initial session replay.
    */
   private handleCompaction(event: CompactionEvent): void {
+    if (this.sessionMonitor.isReplaying) return;
     const trigger = this.triggers.find(t => t.id === 'compaction');
     if (!trigger?.enabled) return;
     if (this.isThrottled(trigger.id, trigger.throttleSeconds)) return;
@@ -301,8 +305,10 @@ export class NotificationTriggerService implements vscode.Disposable {
 
   /**
    * Handles token usage events for threshold crossing detection.
+   * Skips notifications during initial session replay.
    */
   private handleTokenUsage(_usage: { inputTokens: number; outputTokens: number }): void {
+    if (this.sessionMonitor.isReplaying) return;
     if (this.tokenThreshold <= 0) return;
 
     const stats = this.sessionMonitor.getStats();

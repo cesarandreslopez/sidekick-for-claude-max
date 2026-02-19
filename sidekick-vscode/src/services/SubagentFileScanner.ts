@@ -40,17 +40,23 @@ const TASK_TOOLS = ['TaskCreate', 'TaskUpdate', 'TaskGet', 'TaskList'];
  * }
  * ```
  */
+/** Tracks directories already reported as missing to avoid log spam */
+const reportedMissing = new Set<string>();
+
 export function scanSubagentDir(sessionDir: string, sessionId: string): SubagentStats[] {
   const subagentsDir = path.join(sessionDir, sessionId, 'subagents');
   const results: SubagentStats[] = [];
 
-  log(`[SubagentScanner] Scanning: ${subagentsDir}`);
-
   try {
     if (!fs.existsSync(subagentsDir)) {
-      log(`[SubagentScanner] Directory does not exist`);
+      if (!reportedMissing.has(subagentsDir)) {
+        reportedMissing.add(subagentsDir);
+        log(`[SubagentScanner] No subagents directory: ${subagentsDir}`);
+      }
       return results;
     }
+    // Directory appeared — clear the missing flag so future disappearances get logged
+    reportedMissing.delete(subagentsDir);
 
     const files = fs.readdirSync(subagentsDir);
     log(`[SubagentScanner] Found ${files.length} files: ${files.join(', ')}`);

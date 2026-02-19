@@ -245,6 +245,14 @@ export class SessionMonitor implements vscode.Disposable {
   private readonly MAX_ASSISTANT_TEXTS = 200;
   private readonly MAX_ASSISTANT_TEXT_LENGTH = 500;
 
+  /** True while replaying historical events during initial session load */
+  private _isReplaying = false;
+
+  /** Whether the monitor is replaying historical events (initial load) */
+  get isReplaying(): boolean {
+    return this._isReplaying;
+  }
+
   /** Plan state tracking */
   private planState: PlanState | null = null;
   private planModeActive = false;
@@ -1557,6 +1565,7 @@ export class SessionMonitor implements vscode.Disposable {
       return;
     }
 
+    this._isReplaying = true;
     try {
       const events = this.reader.readNew();
       log(`Reading initial content: ${events.length} events`);
@@ -1568,6 +1577,8 @@ export class SessionMonitor implements vscode.Disposable {
     } catch (error) {
       logError('Failed to read initial session content', error);
       throw error;
+    } finally {
+      this._isReplaying = false;
     }
   }
 

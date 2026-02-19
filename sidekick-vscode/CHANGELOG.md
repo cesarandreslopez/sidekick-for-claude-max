@@ -5,6 +5,13 @@ All notable changes to the Sidekick Agent Hub VS Code extension will be document
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.2] - 2026-02-19
+
+### Fixed
+
+- **Notification replay on session load**: Notification triggers (destructive command, credential access, compaction, token threshold) no longer fire for historical events when a session is first loaded — only live events trigger notifications
+- **SubagentScanner log spam**: "Directory does not exist" message now logs once per path instead of every 2-second poll cycle
+
 ## [0.10.1] - 2026-02-19
 
 ### Fixed
